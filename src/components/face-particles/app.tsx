@@ -976,8 +976,8 @@ export function FaceParticlesApp() {
                 <Field label="Particles" value={`${Math.round(params.particles / 1000)}k`} invert={params.invert}>
                   <Slider
                     min={5000}
-                    max={500000}
-                    step={5000}
+                    max={100000}
+                    step={1000}
                     value={[params.particles]}
                     onValueChange={([v]) => patch({ particles: v ?? params.particles })}
                     invert={params.invert}
