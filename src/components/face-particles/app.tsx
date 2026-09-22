@@ -39,7 +39,6 @@ import {
 import { paintStudy } from "@/lib/face-particles/procedural";
 import { applyDepthScale, makeCloud } from "@/lib/face-particles/sampler";
 import { downloadBlob, recordTimeline, type RecordOptions } from "@/lib/face-particles/record";
-import { preloadVision } from "@/lib/face-particles/vision";
 import { isModelCached, downloadAndCacheModel, getModelCacheSize } from "@/lib/face-particles/neural/model-cache";
 import { RecordDialog } from "@/components/face-particles/record-dialog";
 import { PrintDialog } from "@/components/face-particles/print-dialog";
@@ -96,7 +95,7 @@ export function FaceParticlesApp() {
       if (unmounted) return;
       setModelCached(cached);
       if (!cached) {
-        // Start non-blocking background download after initial scene settles
+        // Start non-blocking background download only after user has finished initial interaction
         window.setTimeout(async () => {
           if (unmounted) return;
           setDownloadingModel(true);
@@ -107,9 +106,8 @@ export function FaceParticlesApp() {
           setDownloadingModel(false);
           if (ok) {
             setModelCached(true);
-            setShowNeuralPrompt(true);
           }
-        }, 2500);
+        }, 8000);
       }
     })();
     return () => {
@@ -137,7 +135,7 @@ export function FaceParticlesApp() {
     });
     setGlOk(engine.supported);
     if (engine.supported) {
-      engine.load(makeCloud(32000));
+      engine.load(makeCloud(24000));
       engine.play("idle");
       engine.assemble = 1;
       engine.targetAssemble = 1;
@@ -145,13 +143,7 @@ export function FaceParticlesApp() {
     }
     void (async () => {
       try {
-        await preloadVision();
-        setVisionReady(true);
-      } catch {
-        setVisionReady(false);
-      }
-      try {
-        setBusy({ stage: "Composing a study", fraction: 0.2 });
+        setBusy({ stage: "Composing study", fraction: 0.2 });
         const study = paintStudy(0);
         const cache = await generateFromCanvas(study, paramsRef.current, (p) => setBusy(p));
         cacheRef.current = cache;
@@ -165,6 +157,7 @@ export function FaceParticlesApp() {
         engine.setSlowSway(paramsRef.current.slowSway ?? true);
         engine.play("build");
         setHasPortrait(true);
+        setVisionReady(true);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not start the study.");
       } finally {

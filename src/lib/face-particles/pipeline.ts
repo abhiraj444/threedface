@@ -67,7 +67,7 @@ export async function generateFromSubjectField(
   onProgress?.({ stage: "Laying particle field", fraction: 0.65 });
   const maps = buildWeights(subject.crop, params);
   onProgress?.({ stage: "Sampling blue-noise particles", fraction: 0.85 });
-  const set = sample(maps, subject.depthMap, subject.crop);
+  const set = sample(maps, subject.depthMap, subject.crop, params.particles);
   applyDepthScale(set, params.depth);
   onProgress?.({ stage: "Ready", fraction: 1 });
 
@@ -148,7 +148,7 @@ export async function generateFromCanvas(
   const maps = buildWeights(crop, params);
 
   onProgress?.({ stage: "Sampling particles", fraction: 0.92 });
-  const set = sample(maps, standardDepth, crop);
+  const set = sample(maps, standardDepth, crop, params.particles);
   applyDepthScale(set, params.depth);
 
   onProgress?.({ stage: "Ready", fraction: 1 });
@@ -199,7 +199,7 @@ export function recrop(cache: PipelineCache, params: Params): ParticleSet {
 
 export function rebuildField(cache: PipelineCache, params: Params): ParticleSet {
   const maps = buildWeights(cache.crop, params);
-  const set = sample(maps, cache.depth, cache.crop);
+  const set = sample(maps, cache.depth, cache.crop, params.particles);
   applyDepthScale(set, params.depth);
   cache.set = set;
   return set;

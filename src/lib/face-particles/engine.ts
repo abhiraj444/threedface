@@ -678,7 +678,7 @@ export class ParticleEngine {
     gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, this.tf[read]);
     gl.enable(gl.RASTERIZER_DISCARD);
     gl.beginTransformFeedback(gl.POINTS);
-    gl.drawArrays(gl.POINTS, 0, this.maxCount);
+    gl.drawArrays(gl.POINTS, 0, Math.max(1000, this.drawCount));
     gl.endTransformFeedback();
     gl.disable(gl.RASTERIZER_DISCARD);
     gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null);
