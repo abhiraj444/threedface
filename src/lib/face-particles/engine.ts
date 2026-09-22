@@ -359,37 +359,37 @@ export class ParticleEngine {
     } else if (name === "disassemble") {
       this.targetAssemble = 0;
       this.mode = 4;
-      this.effectAmp = 6.5;
+      this.effectAmp = 5.2;
       this.effectOrigin = [0, 0];
-      this.turb = 1.1;
-      this.spring = 2;
-      this.damp = 1.4;
+      this.turb = 1.35;
+      this.spring = 1.6;
+      this.damp = 1.2;
       this.setState("disassembling");
     } else if (name === "wind") {
-      this.mode = 2;
-      this.effectAmp = 4.2;
-      this.effectOrigin = [-1.4, 0];
+      this.mode = 2; // traveling harmonic wave across particles
+      this.effectAmp = 3.6;
+      this.effectOrigin = [-1.5, 0]; // starts from left
       this.effectT = 0;
       this.setState("effect");
     } else if (name === "vortex") {
-      this.mode = 1;
-      this.effectAmp = 3.4;
+      this.mode = 1; // spiral vortex streams
+      this.effectAmp = 2.8;
       this.effectOrigin = [0, 0.05];
       this.setState("effect");
     } else if (name === "ripple") {
       this.mode = 3;
-      this.effectAmp = 5.5;
+      this.effectAmp = 4.6;
       this.effectT = 0;
       this.setState("effect");
     } else if (name === "fill") {
       this.assemble = 1;
       this.targetAssemble = 1;
-      this.mode = 5; // fill mode — uses uEffectT as a sweepline descending through the face
+      this.mode = 5; // celestial particle rain & fill
       this.effectAmp = 0;
-      this.effectT = 0.60;
-      this.spring = 16;
-      this.damp = 3.6;
-      this.turb = 0.12;
+      this.effectT = 0.75;
+      this.spring = 15;
+      this.damp = 3.2;
+      this.turb = 0.18;
       this.scatterAbove();
       this.setState("filling");
     } else if (name === "idle") {
@@ -399,7 +399,7 @@ export class ParticleEngine {
     }
   }
 
-  /** Scatter particles to the top edge of the visible screen to rain down */
+  /** Scatter particles into organic fluid columns above visible canvas to cascade down */
   private scatterAbove(): void {
     const gl = this.gl;
     const set = this.set;
@@ -409,14 +409,16 @@ export class ParticleEngine {
     const vel = new Float32Array(n * 3);
     for (let i = 0; i < n; i++) {
       const s = set.seed[i] ?? 0;
-      // Horizontally aligned with home X + slight spray
-      pos[i * 3] = set.home[i * 3]! + (s - 0.5) * 0.08;
-      // Start near the top of the visible screen [0.55, 0.70] so particles are immediately visible!
-      pos[i * 3 + 1] = 0.55 + s * 0.15;
-      pos[i * 3 + 2] = set.home[i * 3 + 2]! + (s - 0.5) * 0.05;
-      vel[i * 3] = (s - 0.5) * 0.04;
-      vel[i * 3 + 1] = -0.3 - s * 0.2;
-      vel[i * 3 + 2] = 0;
+      const s2 = set.seed[(i + 17) % n] ?? 0.5;
+      // Disperse horizontally across wide range with fluid stream offsets
+      const lateralDrift = (s - 0.5) * 0.35 + Math.sin(s2 * 12.0) * 0.12;
+      pos[i * 3] = set.home[i * 3]! + lateralDrift;
+      // Stagger vertical heights broadly so particles enter like rain over time, NOT as a concentrated clump
+      pos[i * 3 + 1] = 0.70 + s * 0.95 + s2 * 0.45;
+      pos[i * 3 + 2] = set.home[i * 3 + 2]! + (s - 0.5) * 0.35;
+      vel[i * 3] = (s - 0.5) * 0.08;
+      vel[i * 3 + 1] = -0.5 - s * 0.6;
+      vel[i * 3 + 2] = (s2 - 0.5) * 0.06;
     }
     gl.bindVertexArray(null);
     gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null);
@@ -513,10 +515,10 @@ export class ParticleEngine {
       }
     }
     if (this.state === "filling") {
-      const sweepDuration = 3.2;
+      const sweepDuration = 3.6;
       const progress = Math.min(1.0, this.effectTimer / sweepDuration);
-      // Sweep line descends from top of head (+0.60) through chin (-0.60)
-      const sweepY = 0.60 - progress * 1.25;
+      // Sweep line descends from top of head (+0.75) down through chin (-0.65)
+      const sweepY = 0.75 - progress * 1.40;
       this.effectT = sweepY;
       if (progress >= 1.0) {
         this.mode = 0;
@@ -529,9 +531,12 @@ export class ParticleEngine {
       }
     }
     if (this.state === "effect") {
-      if (this.mode === 2) this.effectOrigin[0] = -1.4 + this.effectTimer * 1.15;
+      if (this.mode === 2) {
+        // Traveling harmonic wave sweeps horizontally across the face [-1.5 -> +1.5]
+        this.effectOrigin[0] = -1.5 + this.effectTimer * 1.15;
+      }
       if (this.mode === 3) this.effectT = this.effectTimer;
-      if (this.effectTimer > 2.4) {
+      if (this.effectTimer > 2.8) {
         this.mode = 0;
         this.effectAmp = 0;
         this.targetAssemble = 1;
@@ -668,17 +673,20 @@ export class ParticleEngine {
     }
     if (forces.vortex !== undefined && forces.vortex > 0.05) {
       this.mode = 1;
-      this.effectAmp = forces.vortex * 3.4;
+      this.effectAmp = forces.vortex * 3.2;
       this.effectOrigin = [0, 0.05];
     } else if (forces.wind !== undefined && forces.wind > 0.05) {
-      this.mode = 2;
-      this.effectAmp = forces.wind * 4.2;
-      this.effectOrigin = [-1.4, 0];
+      this.mode = 2; // traveling harmonic wave across particles
+      this.effectAmp = forces.wind * 3.6;
+      // Oscillate wave front across face during choreography
+      this.effectOrigin = [Math.sin(this.time * 2.2) * 1.2, 0];
     } else if (forces.shockwave !== undefined && forces.shockwave > 0.05) {
       this.mode = 3;
-      this.effectAmp = forces.shockwave * 5.5;
+      this.effectAmp = forces.shockwave * 4.8;
+      this.effectT = (this.time * 0.8) % 1.6;
     } else if (forces.fill !== undefined && forces.fill > 0.05) {
       this.mode = 5;
+      this.effectT = 0.70 - (this.time * 0.35) % 1.4;
     } else if (forces.assemble !== undefined && forces.assemble >= 0.95) {
       this.mode = 0;
     }

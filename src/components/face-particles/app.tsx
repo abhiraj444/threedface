@@ -16,6 +16,7 @@ import {
   Upload,
   Video,
   Waves,
+  Wind,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -596,6 +597,7 @@ export function FaceParticlesApp() {
               {(
                 [
                   ["disassemble", "Break", Aperture],
+                  ["wind", "Wave", Wind],
                   ["ripple", "Ripple", Contrast],
                   ["fill", "Fill", ScanFace],
                 ] as const

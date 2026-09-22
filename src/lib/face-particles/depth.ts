@@ -186,8 +186,9 @@ export function meshDomeDepth(crop: CropResult): Float32Array {
       const ny = (y - cy) / ry;
       const d = nx * nx + ny * ny;
       const dist = Math.sqrt(d);
-      // Smooth cosine dome: derivative is 0 at both center and outer boundary
-      const dome = dist < 1.0 ? 0.5 * (1.0 + Math.cos(dist * Math.PI)) : 0.0;
+      // Smooth anatomical curvature: gentle plateau in center, gradual natural falloff towards ears/chin
+      // pow(cos, 0.75) softens the sharp summit and avoids mask-like pinches
+      const dome = dist < 1.0 ? Math.pow(0.5 * (1.0 + Math.cos(dist * Math.PI)), 0.82) * 0.72 : 0.0;
       const m = mask[i] ?? 0;
 
       let rVal = 0;
@@ -198,9 +199,9 @@ export function meshDomeDepth(crop: CropResult): Float32Array {
       }
       confidence[i] = conf;
 
-      // Regularized depth: dome baseline + feature relief scaled by landmark confidence
-      const blended = clamp(dome + rVal, 0.0, 1.0);
-      depth[i] = blended * (0.80 + 0.20 * m);
+      // Regularized depth: gentle dome baseline + balanced feature relief
+      const blended = clamp(dome + rVal * 0.85, 0.0, 1.0);
+      depth[i] = blended * (0.85 + 0.15 * m);
     }
   }
 

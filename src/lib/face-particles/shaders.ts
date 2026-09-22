@@ -50,21 +50,29 @@ vec3 curlNoise(vec3 p) {
 
 void main() {
   vec3 f = vec3(0.0);
+
+  // Mode 5: Celestial Fill / Stream
+  // Particles cascade down in individual fluid streams with staggered arrival and settle layer-by-layer
   if (uMode > 4.5) {
-    // Fill mode: particles drop from top and settle layer-by-layer from top to bottom
-    float reach = smoothstep(uEffectT - 0.12, uEffectT + 0.08, aHome.y);
-    vec3 springForce = (aHome - aPos) * (uSpring * 1.8);
-    vec3 rainForce = vec3(
-      (aHome.x - aPos.x) * 8.0 + sin(uTime * 8.0 + aSeed * 25.0) * 0.15,
-      -1.5,
-      (aHome.z - aPos.z) * 6.0
+    float stagger = aSeed * 0.28;
+    float reach = smoothstep(uEffectT - 0.16 + stagger, uEffectT + 0.10 + stagger, aHome.y);
+    vec3 springForce = (aHome - aPos) * (uSpring * 1.85);
+    // Dispersed stream with individual lateral drift and vertical descent velocity
+    float sway = sin(uTime * 4.5 + aSeed * 32.0) * 0.25;
+    float streamZ = (aHome.z - aPos.z) * 4.5;
+    vec3 streamForce = vec3(
+      (aHome.x - aPos.x) * 4.5 + sway,
+      -2.4 - aSeed * 1.2,
+      streamZ
     );
-    f += mix(rainForce, springForce, reach);
+    f += mix(streamForce, springForce, reach);
   } else {
-    float k = smoothstep(aSeed * 0.6, aSeed * 0.6 + 0.4, uAssemble);
-    f += (aHome - aPos) * uSpring * k;
+    // Standard harmonic spring with per-particle staggered emergence
+    float k = smoothstep(aSeed * 0.45, aSeed * 0.45 + 0.55, uAssemble);
+    f += (aHome - aPos) * (uSpring * (0.65 + 0.70 * k));
   }
 
+  // Multi-touch interactive repulsion and velocity injection
   for (int i = 0; i < 5; i++) {
     vec2 d = aPos.xy - uTouch[i].xy;
     float rz = max(uTouch[i].z, 0.0001);
@@ -73,24 +81,61 @@ void main() {
     f.xy += nrm * g * uTouch[i].w;
     f.xy += uTouchVel[i] * g * 2.0;
   }
-  f += curlNoise(aPos * 0.8 + vec3(0.0, uTime * 0.1, uTime * 0.07)) * uTurb;
 
+  // Base ambient 3D curl turbulence field (gentle, organic micro-motion)
+  f += curlNoise(aPos * 0.85 + vec3(0.0, uTime * 0.12, uTime * 0.09)) * uTurb;
+
+  // Mode 1: Vortex / Spiral
+  // True particle-level tangential velocity + inward/outward spiral orbit around origin
   if (uMode > 0.5 && uMode < 1.5) {
-    vec2 t = aPos.xy - uEffectOrigin;
-    f.xy += vec2(-t.y, t.x) * uEffectAmp * (1.0 - uAssemble * 0.25);
-  } else if (uMode > 1.5 && uMode < 2.5) {
-    float wave = smoothstep(uEffectOrigin.x - 0.55, uEffectOrigin.x + 0.15, aPos.x);
-    f.x += uEffectAmp * wave;
-    f.z += uEffectAmp * 0.18 * wave;
-  } else if (uMode > 2.5 && uMode < 3.5) {
-    vec2 d = aPos.xy - uEffectOrigin;
-    float dist = length(d);
-    float ring = exp(-pow(dist - uEffectT * 1.85, 2.0) * 26.0);
-    f.xy += (d / (dist + 1e-4)) * ring * uEffectAmp;
-  } else if (uMode > 3.5 && uMode < 4.5) {
+    vec2 delta = aPos.xy - uEffectOrigin;
+    float r = length(delta);
+    if (r > 0.001) {
+      vec2 tangent = vec2(-delta.y, delta.x) / r;
+      vec2 radial = -delta / r;
+      float falloff = 1.0 / (1.0 + r * 2.5);
+      // Particle phase variation creates individual orbiting streamers rather than rigid rotation
+      float particlePhase = sin(r * 12.0 - uTime * 6.0 + aSeed * 6.28) * 0.35;
+      f.xy += (tangent * 4.2 + radial * (1.2 + particlePhase)) * uEffectAmp * falloff;
+      f.z += sin(r * 8.0 + aSeed * 10.0) * uEffectAmp * 0.5 * falloff;
+    }
+  }
+  // Mode 2: Traveling Harmonic Wave
+  // A true traveling sinusoidal wave across the particle field
+  else if (uMode > 1.5 && uMode < 2.5) {
+    float waveFront = uEffectOrigin.x; // moves smoothly from left to right
+    float distToFront = aPos.x - waveFront;
+    // Traveling pulse envelope (Gaussian bell)
+    float envelope = exp(-pow(distToFront * 3.2, 2.0));
+    // High-frequency per-particle harmonic undulation along normal (Z) and lateral (Y)
+    float phase = distToFront * 14.0 - uTime * 8.0 + aSeed * 4.0;
+    f.z += sin(phase) * (uEffectAmp * 2.6) * envelope;
+    f.y += cos(phase * 0.7) * (uEffectAmp * 1.2) * envelope;
+    f.x += sin(phase * 0.5) * (uEffectAmp * 0.8) * envelope;
+  }
+  // Mode 3: Resonance Ripple
+  // Concentric spherical wave front expanding from impact origin
+  else if (uMode > 2.5 && uMode < 3.5) {
     vec3 d = aPos - vec3(uEffectOrigin, 0.0);
     float dist = length(d);
-    f += normalize(d + vec3(0.0, 0.0, 0.12) + 1e-4) * uEffectAmp * (0.45 + aSeed) / (dist + 0.18);
+    float waveRadius = uEffectT * 1.85;
+    float ring = exp(-pow((dist - waveRadius) * 8.0, 2.0));
+    // Particle-level displacement outward and in Z
+    vec3 dir = dist > 1e-4 ? d / dist : vec3(0.0, 0.0, 1.0);
+    float crest = sin((dist - waveRadius) * 22.0 + aSeed * 2.0);
+    f += dir * (ring * crest * uEffectAmp * 3.8);
+    f.z += ring * (uEffectAmp * 2.2) * (1.0 + aSeed);
+  }
+  // Mode 4: Disassemble / Break
+  // Micro-burst explosion with unique particle velocities, swirl, and deep dispersal
+  else if (uMode > 3.5 && uMode < 4.5) {
+    vec3 d = aPos - vec3(uEffectOrigin, 0.0);
+    float dist = length(d);
+    vec3 dir = dist > 1e-4 ? normalize(d) : vec3(0.0, 0.0, 1.0);
+    // Each particle has its own unique chaotic expulsion vector using curl noise + seed
+    vec3 chaoticSpur = curlNoise(aPos * 2.2 + vec3(aSeed * 10.0, uTime * 0.4, aSeed * 5.0));
+    float forceFalloff = 1.0 / (dist + 0.35);
+    f += (dir * 1.6 + chaoticSpur * 3.2) * uEffectAmp * forceFalloff * (0.6 + aSeed * 0.8);
   }
 
   vVel = (aVel + f * uDt) * exp(-uDamp * uDt);

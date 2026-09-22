@@ -169,27 +169,37 @@ export async function recordTimelineExtended(
         const elapsedSec = (performance.now() - startTime) / 1000;
         if (elapsedSec >= duration) return;
 
-        // Find active beat
-        let activeBeat = preset.beats[0]!;
-        for (const beat of preset.beats) {
-          if (elapsedSec >= beat.atSeconds) {
-            activeBeat = beat;
+        // Find active beat and previous beat for smooth continuous interpolation
+        let activeIdx = 0;
+        for (let i = 0; i < preset.beats.length; i++) {
+          if (elapsedSec >= preset.beats[i]!.atSeconds) {
+            activeIdx = i;
           }
         }
+        const activeBeat = preset.beats[activeIdx]!;
+        const prevBeat = activeIdx > 0 ? preset.beats[activeIdx - 1]! : null;
 
         const beatElapsed = Math.max(0, elapsedSec - activeBeat.atSeconds);
         const beatT = Math.min(1, beatElapsed / Math.max(0.1, activeBeat.duration));
         const easedT = evaluateEasing(beatT, activeBeat.easing);
 
-        // Apply camera path
+        // Apply smooth camera path between previous beat target and active beat target
         if (activeBeat.camera) {
-          const yawTarget = ((activeBeat.camera.orbitDeg || 0) * Math.PI) / 180;
-          const pitchTarget = activeBeat.camera.pitch ?? 0.02;
-          const distTarget = activeBeat.camera.distance ?? 2.45;
+          const fromYaw = prevBeat?.camera ? ((prevBeat.camera.orbitDeg || 0) * Math.PI) / 180 : 0;
+          const toYaw = ((activeBeat.camera.orbitDeg || 0) * Math.PI) / 180;
+          const fromPitch = prevBeat?.camera?.pitch ?? 0.02;
+          const toPitch = activeBeat.camera.pitch ?? 0.02;
+          const fromDist = prevBeat?.camera?.distance ?? 2.45;
+          const toDist = activeBeat.camera.distance ?? 2.45;
+
+          const currentYaw = fromYaw + (toYaw - fromYaw) * easedT;
+          const currentPitch = fromPitch + (toPitch - fromPitch) * easedT;
+          const currentDist = fromDist + (toDist - fromDist) * easedT;
+
           engine.setProgrammaticCamera({
-            yaw: yawTarget * easedT,
-            pitch: pitchTarget,
-            distance: distTarget,
+            yaw: currentYaw,
+            pitch: currentPitch,
+            distance: currentDist,
           });
         }
 

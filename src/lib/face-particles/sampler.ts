@@ -63,7 +63,8 @@ export function sample(
     const z01 = depth[pi] ?? 0;
     home[i * 3] = wx;
     home[i * 3 + 1] = wy;
-    home[i * 3 + 2] = (z01 - 0.35) * 0.85;
+    // Bounded anatomical base depth: center at median face plane (0.30) with natural 0.65 scale
+    home[i * 3 + 2] = (z01 - 0.30) * 0.65;
     restZ[i] = home[i * 3 + 2]!;
     toneOut[i] = clampByte((tone[pi] ?? 0) * 255);
     seed[i] = hash21(x + 21.3, y + 8.9);
@@ -107,15 +108,15 @@ export function makeCloud(count = 40_000): ParticleSet {
 }
 
 export function applyDepthScale(set: ParticleSet, depth: number): void {
-  // Regularized depth scaling (v2 Remediation §2.1):
-  // Rather than blowing up the entire Z range linearly (which balloons open forehead and cheeks),
-  // we apply a smooth sigmoid-bounded scale with soft saturation:
-  // depth = 0.5 (default) -> scale ~ 1.0. At high depth, feature relief deepens without runaway inflation.
-  const reliefScale = Math.min(1.55, 0.45 + Math.pow(Math.max(0, depth), 0.85) * 1.1);
+  // Regularized depth scaling:
+  // Maintains correct anatomical proportions across the slider without ballooning cheeks or pinching the nose.
+  // depth = 0.5 (default) -> reliefScale = 1.0. At depth = 1.0 -> reliefScale = 1.38.
+  const d = Math.max(0, depth);
+  const reliefScale = 0.35 + Math.pow(d, 0.75) * 1.05;
   for (let i = 0; i < set.count; i++) {
     const rz = set.restZ[i]!;
     const scaled = rz * reliefScale;
-    // Bounded bounds check to guarantee zero runaway geometry
-    set.home[i * 3 + 2] = Math.max(-0.55, Math.min(0.65, scaled));
+    // Bounded bounds check to guarantee zero runaway geometry or edge tearing
+    set.home[i * 3 + 2] = Math.max(-0.48, Math.min(0.55, scaled));
   }
 }
