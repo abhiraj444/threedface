@@ -1,9 +1,19 @@
 import { useState } from "react";
-import { Clock, Smartphone, Video, X, Sparkles, ShieldCheck } from "lucide-react";
+import {
+  Clock,
+  Smartphone,
+  Video,
+  X,
+  Aperture,
+  Wind,
+  Contrast,
+  ScanFace,
+  Layers,
+  Sparkles,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import type { EffectName } from "@/lib/face-particles/types";
 import type { RecordOptions, RecordSequenceType } from "@/lib/face-particles/record";
 
 interface RecordDialogProps {
@@ -14,34 +24,73 @@ interface RecordDialogProps {
 }
 
 export function RecordDialog({ open, onClose, onStart, invert }: RecordDialogProps) {
-  const [sequence, setSequence] = useState<RecordSequenceType>("break_reassemble");
-  const [duration, setDuration] = useState<number>(14);
+  const [selectedAnimation, setSelectedAnimation] = useState<RecordSequenceType>("break");
+  const [duration, setDuration] = useState<number>(12);
   const [aspect916, setAspect916] = useState<boolean>(true);
   const [resolution, setResolution] = useState<"1080p" | "720p">("1080p");
   const [colorChoice, setColorChoice] = useState<"original" | "color" | "mono">("original");
-  const [selectedEffects] = useState<EffectName[]>([
-    "disassemble",
-    "ripple",
-    "fill",
-  ]);
 
   if (!open) return null;
 
   const handleStart = () => {
     onStart({
       aspect916,
-      sequence,
+      sequence: selectedAnimation,
       resolution,
       durationSeconds: duration,
       colorMode: colorChoice,
       forceColor: colorChoice === "color",
-      customEffects: sequence === "custom" ? selectedEffects : undefined,
     });
     onClose();
   };
 
+  const animationOptions = [
+    {
+      id: "break" as const,
+      label: "Break",
+      desc: "Disperses apart and reassembles smoothly",
+      icon: Aperture,
+      defDur: 12,
+    },
+    {
+      id: "wind" as const,
+      label: "Wave",
+      desc: "Smooth harmonic traveling particle wave",
+      icon: Wind,
+      defDur: 12,
+    },
+    {
+      id: "ripple" as const,
+      label: "Ripple",
+      desc: "Expansive spherical particle shockwave",
+      icon: Contrast,
+      defDur: 12,
+    },
+    {
+      id: "fill" as const,
+      label: "Fill",
+      desc: "Cascades gently from top to bottom",
+      icon: ScanFace,
+      defDur: 12,
+    },
+    {
+      id: "all" as const,
+      label: "All Effects",
+      desc: "Plays Break, Wave, Ripple, and Fill in sequence",
+      icon: Layers,
+      defDur: 24,
+    },
+    {
+      id: "idle" as const,
+      label: "Pure 3D Sway",
+      desc: "Clean volumetric sway without disruption",
+      icon: Sparkles,
+      defDur: 12,
+    },
+  ];
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
       <div
         className={cn(
           "relative w-full max-w-md max-h-[90vh] overflow-y-auto rounded-[28px] border p-6 shadow-2xl transition-colors",
@@ -74,29 +123,61 @@ export function RecordDialog({ open, onClose, onStart, invert }: RecordDialogPro
           <div>
             <h2 className="font-display text-xl leading-tight">Export Video</h2>
             <p className={cn("text-xs", invert ? "text-neutral-500" : "text-fg-subtle")}>
-              Cinematic MP4 ready for WhatsApp Status & Instagram Reels
+              Record the portrait animation as high-definition MP4
             </p>
           </div>
         </div>
 
-        {/* WhatsApp Compatibility Guarantee Banner */}
-        <div
-          className={cn(
-            "mb-4 flex items-center gap-2.5 rounded-xl border p-2.5 text-xs",
-            invert
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-              : "border-emerald-500/30 bg-emerald-950/20 text-emerald-400",
-          )}
-        >
-          <ShieldCheck className="size-4 shrink-0 text-emerald-500" />
-          <div>
-            <span className="font-semibold">WhatsApp Status Compatible</span>: Injects a silent A/V audio track and baseline AVC1 MP4 profile to prevent WhatsApp transcoder upload errors.
-          </div>
-        </div>
-
         <div className="space-y-4">
+          {/* Main Animation Mode Selector */}
+          <div>
+            <div className={cn("text-xs font-semibold uppercase tracking-[0.12em] mb-1.5", invert ? "text-neutral-600" : "text-fg-subtle")}>
+              Select Animation
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {animationOptions.map((opt) => {
+                const active = selectedAnimation === opt.id;
+                const Icon = opt.icon;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedAnimation(opt.id);
+                      if (opt.id === "all") setDuration(24);
+                      else if (duration > 16) setDuration(12);
+                    }}
+                    className={cn(
+                      "flex flex-col p-2.5 rounded-xl border text-left transition-all",
+                      active
+                        ? invert
+                          ? "border-neutral-900 bg-neutral-900 text-white shadow-sm"
+                          : "border-accent bg-accent/20 text-fg font-medium ring-1 ring-accent/50"
+                        : invert
+                          ? "border-neutral-200 bg-white hover:border-neutral-300 text-neutral-800"
+                          : "border-border/60 bg-bg/30 hover:border-border text-fg-muted",
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <Icon className={cn("size-4", active ? (invert ? "text-white" : "text-accent") : "text-fg-subtle")} />
+                      <span className="text-xs font-semibold">{opt.label}</span>
+                    </div>
+                    <span
+                      className={cn(
+                        "text-[10px] mt-1 leading-snug",
+                        active ? (invert ? "text-neutral-300" : "text-fg/80") : (invert ? "text-neutral-500" : "text-fg-subtle"),
+                      )}
+                    >
+                      {opt.desc}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Format & Aspect Toggle */}
-          <div className="grid grid-cols-1 gap-2">
+          <div>
             <label
               className={cn(
                 "flex items-center justify-between p-3 rounded-xl border transition-colors",
@@ -123,30 +204,33 @@ export function RecordDialog({ open, onClose, onStart, invert }: RecordDialogPro
             </div>
             <div className="grid grid-cols-2 gap-2">
               {[
-                { id: "1080p", label: "1080p Ultra HD", sub: "1080 × 1920 (Sharpest)" },
-                { id: "720p", label: "720p Mobile Fast", sub: "720 × 1280 (Fastest Upload)" },
-              ].map((res) => (
-                <button
-                  key={res.id}
-                  type="button"
-                  onClick={() => setResolution(res.id as "1080p" | "720p")}
-                  className={cn(
-                    "flex flex-col p-2.5 rounded-xl border text-left transition-all",
-                    resolution === res.id
-                      ? invert
-                        ? "border-neutral-900 bg-neutral-900 text-white shadow-sm"
-                        : "border-accent bg-accent/15 text-fg font-medium"
-                      : invert
-                        ? "border-neutral-200 bg-white hover:border-neutral-300 text-neutral-800"
-                        : "border-border/60 bg-bg/30 hover:border-border text-fg-muted",
-                  )}
-                >
-                  <span className="text-xs font-semibold">{res.label}</span>
-                  <span className={cn("text-[10px] mt-0.5", resolution === res.id ? (invert ? "text-neutral-300" : "text-fg-muted") : "text-fg-subtle")}>
-                    {res.sub}
-                  </span>
-                </button>
-              ))}
+                { id: "1080p", label: "1080p Ultra HD", sub: aspect916 ? "1080 × 1920 (Sharpest)" : "1920 × 1080" },
+                { id: "720p", label: "720p Fast", sub: aspect916 ? "720 × 1280 (Fast)" : "1280 × 720" },
+              ].map((res) => {
+                const active = resolution === res.id;
+                return (
+                  <button
+                    key={res.id}
+                    type="button"
+                    onClick={() => setResolution(res.id as "1080p" | "720p")}
+                    className={cn(
+                      "flex flex-col p-2 rounded-xl border text-left transition-all",
+                      active
+                        ? invert
+                          ? "border-neutral-900 bg-neutral-900 text-white shadow-sm"
+                          : "border-accent bg-accent/15 text-fg font-medium"
+                        : invert
+                          ? "border-neutral-200 bg-white hover:border-neutral-300 text-neutral-800"
+                          : "border-border/60 bg-bg/30 hover:border-border text-fg-muted",
+                    )}
+                  >
+                    <span className="text-xs font-semibold">{res.label}</span>
+                    <span className={cn("text-[10px] mt-0.5", active ? (invert ? "text-neutral-300" : "text-fg/80") : (invert ? "text-neutral-500" : "text-fg-subtle"))}>
+                      {res.sub}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -188,70 +272,6 @@ export function RecordDialog({ open, onClose, onStart, invert }: RecordDialogPro
             </div>
           </div>
 
-          {/* Animation Sequence Selection */}
-          <div>
-            <div className={cn("text-xs font-medium uppercase tracking-[0.12em] mb-1.5", invert ? "text-neutral-500" : "text-fg-subtle")}>
-              Cinematic Choreography
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              {[
-                {
-                  id: "break_reassemble",
-                  label: "Disperse & Reform",
-                  sub: "Disperse + harmonic snap",
-                  defDur: 14,
-                },
-                {
-                  id: "fill_break",
-                  label: "Celestial Rain",
-                  sub: "Rain fill + wind wave",
-                  defDur: 16,
-                },
-                {
-                  id: "vortex_burst",
-                  label: "Vortex Burst",
-                  sub: "Cosmic spiral + shockwave",
-                  defDur: 15,
-                },
-              ].map((opt) => {
-                const active = sequence === opt.id;
-                return (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    onClick={() => {
-                      setSequence(opt.id as RecordSequenceType);
-                      setDuration(opt.defDur);
-                    }}
-                    className={cn(
-                      "flex flex-col p-2 rounded-xl border text-left transition-all",
-                      active
-                        ? invert
-                          ? "border-neutral-900 bg-neutral-900 text-white shadow-sm"
-                          : "border-accent bg-accent/15 text-fg font-medium"
-                        : invert
-                          ? "border-neutral-200 bg-white hover:border-neutral-300 text-neutral-800"
-                          : "border-border/60 bg-bg/30 hover:border-border text-fg-muted",
-                    )}
-                  >
-                    <div className="flex items-center gap-1">
-                      <Sparkles className="size-3 text-accent" />
-                      <span className="text-xs font-semibold">{opt.label}</span>
-                    </div>
-                    <span
-                      className={cn(
-                        "text-[10px] mt-0.5",
-                        active ? (invert ? "text-neutral-300" : "text-fg-muted") : "text-fg-subtle",
-                      )}
-                    >
-                      {opt.sub}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
           {/* Duration Selector */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
@@ -264,7 +284,7 @@ export function RecordDialog({ open, onClose, onStart, invert }: RecordDialogPro
               </span>
             </div>
             <div className="grid grid-cols-4 gap-1.5">
-              {[12, 16, 24, 30].map((s) => (
+              {[8, 12, 16, 24].map((s) => (
                 <button
                   key={s}
                   type="button"

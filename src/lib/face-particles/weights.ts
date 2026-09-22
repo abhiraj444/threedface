@@ -186,11 +186,18 @@ export function buildWeights(crop: CropResult, params: Params): WeightMaps {
   const a = params.detail;
   const b = params.feature;
   const floor = params.floor;
-  // Floor applies uniformly across the subject (hair, face, accessories) to prevent any boundary seam
-  const subjFloor = params.invert ? Math.min(floor, 0.05) : Math.max(floor, 0.16);
+  // Ensure minimum baseline particles exist across the whole subject (hair, fur, muzzle, skin)
+  // German Shepherds and dark pets have dark brown/black fur that needs higher floor to avoid empty silhouettes
+  const subjFloor = params.invert
+    ? Math.min(floor, 0.05)
+    : Math.max(floor, hasHairSkin ? 0.28 : 0.20);
+
   for (let i = 0; i < weight.length; i++) {
+    // For dark regions (low tone), ensure strong edge and detail boost so features are defined
     let wv = Math.pow(Math.max(tone[i]!, 1e-5), gamma) * (1 + a * edges[i]!) * (1 + b * L[i]!);
-    wv = Math.max(wv, subjFloor * (hairSkin[i] ?? 0));
+    // Dark fur relief floor with edge awareness
+    const subjectMask = Math.max(hairSkin[i] ?? 0, (faceSkin[i] ?? 0));
+    wv = Math.max(wv, subjFloor * subjectMask * (1.0 + edges[i]! * 1.5));
     if (params.removeBg) {
       const m = M[i]!;
       // Clean background cutoff: completely erases particles from room/wall background

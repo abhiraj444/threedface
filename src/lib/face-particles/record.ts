@@ -44,11 +44,22 @@ function wait(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-export type RecordSequenceType = "break_reassemble" | "fill_break" | "vortex_burst" | "custom";
+export type RecordSequenceType =
+  | "break"
+  | "wind"
+  | "ripple"
+  | "fill"
+  | "all"
+  | "idle"
+  | "break_reassemble"
+  | "fill_break"
+  | "vortex_burst"
+  | "custom";
 
 export interface RecordOptions {
   aspect916?: boolean;
   sequence?: RecordSequenceType;
+  animation?: EffectName | "all" | "idle";
   customEffects?: EffectName[];
   durationSeconds?: number;
   colorMode?: "original" | "color" | "mono";
@@ -99,6 +110,9 @@ export async function recordTimelineExtended(
     engine.colorMode = 0;
   }
 
+  const animChoice = opts.animation || (opts.sequence as string);
+  const isSingleMainAnim = ["break", "wind", "ripple", "fill", "all", "idle"].includes(animChoice);
+
   // Set 9:16 WhatsApp Status / Reels format (1080x1920 or 720x1280)
   const is720p = opts.resolution === "720p";
   const targetW = is720p ? 720 : 1080;
@@ -108,7 +122,10 @@ export async function recordTimelineExtended(
     engine.setRecordingAspect(9 / 16, targetW, targetH);
   }
 
-  engine.lockIdleOrbit(true);
+  // Only lock idle orbit if a choreographed programmatic camera path is used
+  if (!isSingleMainAnim) {
+    engine.lockIdleOrbit(true);
+  }
 
   // Initialize export canvas manager for clean audio muxing
   const exportManager = new ExportCanvasManager({ width: targetW, height: targetH });
@@ -161,82 +178,157 @@ export async function recordTimelineExtended(
   let animId: number | null = null;
 
   try {
-    const preset: ChoreographyPreset | undefined = CHOREOGRAPHY_PRESETS[sequence];
-
-    if (preset && preset.beats.length > 0) {
-      // Run continuous camera & force animation loop
-      const runTimelineLoop = () => {
-        const elapsedSec = (performance.now() - startTime) / 1000;
-        if (elapsedSec >= duration) return;
-
-        // Find active beat and previous beat for smooth continuous interpolation
-        let activeIdx = 0;
-        for (let i = 0; i < preset.beats.length; i++) {
-          if (elapsedSec >= preset.beats[i]!.atSeconds) {
-            activeIdx = i;
+    if (isSingleMainAnim) {
+      if (animChoice === "break") {
+        // Break and reassemble smoothly
+        onTick?.("Break & Disperse");
+        engine.play("disassemble");
+        // Halfway through, reassemble
+        const halfMs = Math.round(totalMs * 0.45);
+        await wait(halfMs);
+        onTick?.("Smooth Reassemble");
+        engine.play("assemble");
+        const remainingMs = totalMs - (performance.now() - startTime);
+        if (remainingMs > 0) await wait(remainingMs);
+      } else if (animChoice === "wind") {
+        // Wave animation
+        onTick?.("Particle Wave");
+        engine.play("wind");
+        const loopInterval = 3200;
+        while (performance.now() - startTime < totalMs - 500) {
+          await wait(Math.min(loopInterval, totalMs - (performance.now() - startTime)));
+          if (performance.now() - startTime < totalMs - 1000) {
+            engine.play("wind");
           }
         }
-        const activeBeat = preset.beats[activeIdx]!;
-        const prevBeat = activeIdx > 0 ? preset.beats[activeIdx - 1]! : null;
-
-        const beatElapsed = Math.max(0, elapsedSec - activeBeat.atSeconds);
-        const beatT = Math.min(1, beatElapsed / Math.max(0.1, activeBeat.duration));
-        const easedT = evaluateEasing(beatT, activeBeat.easing);
-
-        // Apply smooth camera path between previous beat target and active beat target
-        if (activeBeat.camera) {
-          const fromYaw = prevBeat?.camera ? ((prevBeat.camera.orbitDeg || 0) * Math.PI) / 180 : 0;
-          const toYaw = ((activeBeat.camera.orbitDeg || 0) * Math.PI) / 180;
-          const fromPitch = prevBeat?.camera?.pitch ?? 0.02;
-          const toPitch = activeBeat.camera.pitch ?? 0.02;
-          const fromDist = prevBeat?.camera?.distance ?? 2.45;
-          const toDist = activeBeat.camera.distance ?? 2.45;
-
-          const currentYaw = fromYaw + (toYaw - fromYaw) * easedT;
-          const currentPitch = fromPitch + (toPitch - fromPitch) * easedT;
-          const currentDist = fromDist + (toDist - fromDist) * easedT;
-
-          engine.setProgrammaticCamera({
-            yaw: currentYaw,
-            pitch: currentPitch,
-            distance: currentDist,
-          });
+        const remainingMs = totalMs - (performance.now() - startTime);
+        if (remainingMs > 0) await wait(remainingMs);
+      } else if (animChoice === "ripple") {
+        // Ripple animation
+        onTick?.("Particle Ripple");
+        engine.play("ripple");
+        const loopInterval = 3000;
+        while (performance.now() - startTime < totalMs - 500) {
+          await wait(Math.min(loopInterval, totalMs - (performance.now() - startTime)));
+          if (performance.now() - startTime < totalMs - 1000) {
+            engine.play("ripple");
+          }
         }
-
-        // Apply forces
-        engine.setForces(activeBeat.forces);
-
-        animId = requestAnimationFrame(runTimelineLoop);
-      };
-
-      runTimelineLoop();
-
-      // Tick update notifications for UI
-      for (const beat of preset.beats) {
-        const beatStartMs = beat.atSeconds * 1000;
-        const nowMs = performance.now() - startTime;
-        if (beatStartMs > nowMs) {
-          await wait(beatStartMs - nowMs);
+        const remainingMs = totalMs - (performance.now() - startTime);
+        if (remainingMs > 0) await wait(remainingMs);
+      } else if (animChoice === "fill") {
+        // Fill animation
+        onTick?.("Particle Fill");
+        engine.play("fill");
+        const remainingMs = totalMs - (performance.now() - startTime);
+        if (remainingMs > 0) await wait(remainingMs);
+      } else if (animChoice === "all") {
+        // Play all 4 main animations sequentially: Break -> Wave -> Ripple -> Fill
+        const sequenceList: { name: EffectName; label: string }[] = [
+          { name: "disassemble", label: "Break & Disperse" },
+          { name: "wind", label: "Particle Wave" },
+          { name: "ripple", label: "Particle Ripple" },
+          { name: "fill", label: "Particle Fill" },
+        ];
+        const stepMs = Math.floor(totalMs / sequenceList.length);
+        for (let i = 0; i < sequenceList.length; i++) {
+          const item = sequenceList[i]!;
+          onTick?.(item.label);
+          engine.play(item.name);
+          if (item.name === "disassemble") {
+            // Give time to disperse and start coming back
+            await wait(Math.floor(stepMs * 0.55));
+            engine.play("assemble");
+            await wait(stepMs - Math.floor(stepMs * 0.55));
+          } else {
+            await wait(stepMs);
+          }
         }
-        onTick?.(beat.name);
-      }
-
-      const remainingMs = totalMs - (performance.now() - startTime);
-      if (remainingMs > 0) {
-        await wait(remainingMs);
+      } else if (animChoice === "idle") {
+        // Clean, pure 3D sway without disruptive effects
+        onTick?.("Pure 3D Portrait");
+        engine.play("idle");
+        const remainingMs = totalMs - (performance.now() - startTime);
+        if (remainingMs > 0) await wait(remainingMs);
       }
     } else {
-      // Custom effects fallback
-      const effects =
-        opts.customEffects && opts.customEffects.length > 0
-          ? opts.customEffects
-          : (["disassemble", "ripple"] as EffectName[]);
-      const stepMs = Math.round(totalMs / effects.length);
-      for (let i = 0; i < effects.length; i++) {
-        const eff = effects[i]!;
-        onTick?.(`Effect ${i + 1}/${effects.length} · ${eff.toUpperCase()}`);
-        engine.play(eff);
-        await wait(stepMs);
+      const preset: ChoreographyPreset | undefined = CHOREOGRAPHY_PRESETS[sequence];
+
+      if (preset && preset.beats.length > 0) {
+        // Run continuous camera & force animation loop
+        const runTimelineLoop = () => {
+          const elapsedSec = (performance.now() - startTime) / 1000;
+          if (elapsedSec >= duration) return;
+
+          // Find active beat and previous beat for smooth continuous interpolation
+          let activeIdx = 0;
+          for (let i = 0; i < preset.beats.length; i++) {
+            if (elapsedSec >= preset.beats[i]!.atSeconds) {
+              activeIdx = i;
+            }
+          }
+          const activeBeat = preset.beats[activeIdx]!;
+          const prevBeat = activeIdx > 0 ? preset.beats[activeIdx - 1]! : null;
+
+          const beatElapsed = Math.max(0, elapsedSec - activeBeat.atSeconds);
+          const beatT = Math.min(1, beatElapsed / Math.max(0.1, activeBeat.duration));
+          const easedT = evaluateEasing(beatT, activeBeat.easing);
+
+          // Apply smooth camera path between previous beat target and active beat target
+          if (activeBeat.camera) {
+            const fromYaw = prevBeat?.camera ? ((prevBeat.camera.orbitDeg || 0) * Math.PI) / 180 : 0;
+            const toYaw = ((activeBeat.camera.orbitDeg || 0) * Math.PI) / 180;
+            const fromPitch = prevBeat?.camera?.pitch ?? 0.02;
+            const toPitch = activeBeat.camera.pitch ?? 0.02;
+            const fromDist = prevBeat?.camera?.distance ?? 2.45;
+            const toDist = activeBeat.camera.distance ?? 2.45;
+
+            const currentYaw = fromYaw + (toYaw - fromYaw) * easedT;
+            const currentPitch = fromPitch + (toPitch - fromPitch) * easedT;
+            const currentDist = fromDist + (toDist - fromDist) * easedT;
+
+            engine.setProgrammaticCamera({
+              yaw: currentYaw,
+              pitch: currentPitch,
+              distance: currentDist,
+            });
+          }
+
+          // Apply forces
+          engine.setForces(activeBeat.forces);
+
+          animId = requestAnimationFrame(runTimelineLoop);
+        };
+
+        runTimelineLoop();
+
+        // Tick update notifications for UI
+        for (const beat of preset.beats) {
+          const beatStartMs = beat.atSeconds * 1000;
+          const nowMs = performance.now() - startTime;
+          if (beatStartMs > nowMs) {
+            await wait(beatStartMs - nowMs);
+          }
+          onTick?.(beat.name);
+        }
+
+        const remainingMs = totalMs - (performance.now() - startTime);
+        if (remainingMs > 0) {
+          await wait(remainingMs);
+        }
+      } else {
+        // Custom effects fallback
+        const effects =
+          opts.customEffects && opts.customEffects.length > 0
+            ? opts.customEffects
+            : (["disassemble", "ripple"] as EffectName[]);
+        const stepMs = Math.round(totalMs / effects.length);
+        for (let i = 0; i < effects.length; i++) {
+          const eff = effects[i]!;
+          onTick?.(`Effect ${i + 1}/${effects.length} · ${eff.toUpperCase()}`);
+          engine.play(eff);
+          await wait(stepMs);
+        }
       }
     }
   } finally {

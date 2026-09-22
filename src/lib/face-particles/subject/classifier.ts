@@ -54,13 +54,14 @@ export function classifySubject(
     }
     const avgSat = satSum / Math.max(1, count);
 
-    // Moderate to high saturation with organic shape is likely an animal or pet
-    if (avgSat > 0.22) {
+    // If no human face detected, standard photographic inputs (pets, animals, portraits)
+    // should route to animal for organic volumetric treatment rather than flat object saliency
+    if (avgSat > 0.08) {
       return "animal";
     }
   } catch {
     // Canvas read restriction fallback
   }
 
-  return "object";
+  return "animal";
 }

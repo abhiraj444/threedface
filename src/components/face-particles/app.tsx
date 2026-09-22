@@ -629,6 +629,43 @@ export function FaceParticlesApp() {
               <button
                 type="button"
                 onClick={() => {
+                  const currentMode = params.colorStyle ?? (params.color ? "color" : "mono");
+                  const nextMode = currentMode === "mono" ? "color" : currentMode === "color" ? "hybrid" : "mono";
+                  patch({
+                    colorStyle: nextMode,
+                    color: nextMode !== "mono",
+                  });
+                  setNotification(`Palette: ${nextMode.toUpperCase()}`);
+                  window.setTimeout(() => setNotification(null), 2500);
+                }}
+                title="Cycle Palette (Mono / Color / Hybrid)"
+                className={cn(
+                  "flex h-10 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-colors",
+                  params.invert
+                    ? "text-neutral-700 hover:bg-neutral-100 hover:text-neutral-950"
+                    : "text-fg-muted hover:bg-bg-subtle hover:text-fg",
+                )}
+              >
+                <Sparkles className="size-3.5 text-accent" />
+                <span>
+                  {params.colorStyle === "color" || (!params.colorStyle && params.color)
+                    ? "Color"
+                    : params.colorStyle === "hybrid"
+                      ? "Hybrid"
+                      : "Mono"}
+                </span>
+              </button>
+
+              <div
+                className={cn(
+                  "my-1.5 w-px self-stretch",
+                  params.invert ? "bg-neutral-200" : "bg-border/60",
+                )}
+              />
+
+              <button
+                type="button"
+                onClick={() => {
                   const nextSway = !(params.slowSway ?? true);
                   patch({ slowSway: nextSway });
                   setNotification(nextSway ? "Gentle sway enabled" : "Gentle sway paused");
