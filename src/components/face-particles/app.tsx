@@ -258,7 +258,13 @@ export function FaceParticlesApp() {
       const cache = cacheRef.current;
       if (!engine || !cache) return next;
 
-      if (partial.particles != null) engine.setDrawCount(next.particles);
+      if (partial.particles != null) {
+        if (cache.set && next.particles > cache.set.count) {
+          const newSet = rebuildField(cache, next);
+          engine.load(newSet, { scatter: false });
+        }
+        engine.setDrawCount(next.particles);
+      }
       if (partial.colorStyle != null) engine.setColorMode(next.colorStyle);
       else if (partial.color != null) engine.setColorMode(next.color);
       if (partial.colorMix != null) engine.setColorMix(next.colorMix);
@@ -977,8 +983,8 @@ export function FaceParticlesApp() {
                 <Field label="Particles" value={`${Math.round(params.particles / 1000)}k`} invert={params.invert}>
                   <Slider
                     min={5000}
-                    max={100000}
-                    step={1000}
+                    max={500000}
+                    step={5000}
                     value={[params.particles]}
                     onValueChange={([v]) => patch({ particles: v ?? params.particles })}
                     invert={params.invert}

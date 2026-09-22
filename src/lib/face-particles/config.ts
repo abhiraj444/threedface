@@ -2,8 +2,8 @@ import type { Params } from "./types";
 
 export const WORKING_W = 768;
 export const WORKING_H = 1024;
-export const N_MAX = 150_000;
-export const N_DEFAULT = 50_000;
+export const N_MAX = 500_000;
+export const N_DEFAULT = 60_000;
 export const POINT_SIZE_REF_N = 50_000;
 export const TOUCH_SLOTS = 5;
 export const ORBIT_LIMIT = (25 * Math.PI) / 180;

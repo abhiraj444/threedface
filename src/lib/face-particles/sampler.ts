@@ -21,9 +21,12 @@ export function sample(
     if (wv < 0.001) continue;
     const x = i % w;
     const y = (i / w) | 0;
-    const t = blueAt(noise, x, y);
-    const r = Math.min(1, t / wv);
-    keys[n] = (r * 65535) | 0;
+    const t = Math.max(1e-5, blueAt(noise, x, y));
+    // Continuous monotonic ranking: maps [0, inf) smoothly to [0, 1) without clamping artifacts.
+    // Eliminates scanline dumping where pixels with t >= wv were previously forced into key 65535
+    // and truncated in top-to-bottom row order.
+    const r = t / (t + Math.max(1e-5, wv));
+    keys[n] = Math.min(65535, (r * 65535) | 0);
     index[n] = i;
     n++;
   }
@@ -43,7 +46,7 @@ export function sample(
     counts[k]++;
   }
 
-  const count = Math.min(nMax, n);
+  const count = Math.min(nMax, n > 0 ? nMax : 0);
   const home = new Float32Array(count * 3);
   const restZ = new Float32Array(count);
   const toneOut = new Uint8Array(count);
@@ -53,11 +56,12 @@ export function sample(
   const aspect = h / w;
 
   for (let i = 0; i < count; i++) {
-    const pi = sorted[i]!;
+    const pass = n > 0 ? (i / n) | 0 : 0;
+    const pi = sorted[n > 0 ? i % n : 0]!;
     const x = pi % w;
     const y = (pi / w) | 0;
-    const jx = hash21(x + 0.3, y + 1.7) - 0.5;
-    const jy = hash21(x + 9.1, y + 4.2) - 0.5;
+    const jx = hash21(x + 0.3 + pass * 3.7, y + 1.7 + pass * 7.1) - 0.5;
+    const jy = hash21(x + 9.1 + pass * 5.3, y + 4.2 + pass * 2.9) - 0.5;
     const wx = ((x + jx + 0.5) / w) * 2 - 1;
     const wy = -(((y + jy + 0.5) / h) * 2 - 1) * aspect;
     const z01 = depth[pi] ?? 0;
@@ -67,7 +71,7 @@ export function sample(
     home[i * 3 + 2] = (z01 - 0.30) * 0.65;
     restZ[i] = home[i * 3 + 2]!;
     toneOut[i] = clampByte((tone[pi] ?? 0) * 255);
-    seed[i] = hash21(x + 21.3, y + 8.9);
+    seed[i] = hash21(x + 21.3 + pass * 11.7, y + 8.9 + pass * 13.1);
     const p = pi * 4;
     color[i * 3] = px[p]!;
     color[i * 3 + 1] = px[p + 1]!;

@@ -214,11 +214,15 @@ export function headCrop(
         const isBody = c === CLASS_BODY;
         const isOthers = c === CLASS_OTHERS; // Glasses and accessories!
         const isHat = c === CLASS_CLOTHES && y0 < -outH * 0.2; // Caps / hats strictly above head
-        const neck = isBody && y > chinCropY - 4 && y < chinCropY + outH * 0.12;
+        // Include neck, collar, and upper torso / shoulders symmetrically below chin with a graceful bust vignette.
+        // Prevents asymmetric one-sided cutoff when clothing on one side is CLASS_CLOTHES while the other side has hair.
+        const isTorso = (isBody || c === CLASS_CLOTHES) && y > chinCropY - 6;
+        const torsoFalloff = isTorso ? clamp(1 - (y - chinCropY) / (outH * 0.32), 0, 1) : 0;
+        const isHeadSubject = isHair || isFace || isOthers || isHat;
 
-        hairSkin[i] = isHair || isFace || isOthers || isHat || neck ? 1 : 0;
+        hairSkin[i] = isHeadSubject || (isTorso && torsoFalloff > 0.05) ? 1 : 0;
         faceSkin[i] = isFace || isOthers ? 1 : 0;
-        mask[i] = isHair || isFace || isOthers || isHat ? 1 : neck ? clamp(1 - (y - chinCropY) / (outH * 0.10), 0, 1) : 0;
+        mask[i] = isHeadSubject ? 1 : torsoFalloff;
       }
     }
   } else {
