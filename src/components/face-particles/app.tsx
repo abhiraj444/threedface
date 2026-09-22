@@ -1,0 +1,1184 @@
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  Aperture,
+  Camera,
+  ChevronUp,
+  Contrast,
+  Download,
+  FlipHorizontal2,
+  ImagePlus,
+  Loader2,
+  Printer,
+  ScanFace,
+  Smartphone,
+  Sparkles,
+  Type,
+  Upload,
+  Video,
+  Waves,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
+import { loadParams, SAMPLES, writeHash } from "@/lib/face-particles/config";
+import { ParticleEngine } from "@/lib/face-particles/engine";
+import {
+  generateFromCanvas,
+  generateFromFile,
+  generateFromText,
+  generateFromUrl,
+  recrop,
+  rebuildField,
+  switchDepthMode,
+  type PipelineCache,
+} from "@/lib/face-particles/pipeline";
+import { paintStudy } from "@/lib/face-particles/procedural";
+import { applyDepthScale, makeCloud } from "@/lib/face-particles/sampler";
+import { downloadBlob, recordTimeline, type RecordOptions } from "@/lib/face-particles/record";
+import { preloadVision } from "@/lib/face-particles/vision";
+import { isModelCached, downloadAndCacheModel } from "@/lib/face-particles/neural/model-cache";
+import { RecordDialog } from "@/components/face-particles/record-dialog";
+import { PrintDialog } from "@/components/face-particles/print-dialog";
+import { TextDialog } from "@/components/face-particles/text-dialog";
+import type { AnimState, EffectName, Params } from "@/lib/face-particles/types";
+
+type Busy = { stage: string; fraction: number } | null;
+
+export function FaceParticlesApp() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const engineRef = useRef<ParticleEngine | null>(null);
+  const cacheRef = useRef<PipelineCache | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const camRef = useRef<HTMLInputElement>(null);
+  const paramsRef = useRef<Params>(loadParams());
+  const rebuildTimer = useRef<number>(0);
+
+  const [params, setParams] = useState<Params>(() => paramsRef.current);
+  const [hero, setHero] = useState(true);
+  const [sheet, setSheet] = useState(false);
+  const [busy, setBusy] = useState<Busy>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [glOk, setGlOk] = useState(true);
+  const [anim, setAnim] = useState<AnimState>("building");
+  const [recording, setRecording] = useState<string | null>(null);
+  const [hasPortrait, setHasPortrait] = useState(false);
+  const [visionReady, setVisionReady] = useState(false);
+  const [recordDialogOpen, setRecordDialogOpen] = useState(false);
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [textDialogOpen, setTextDialogOpen] = useState(false);
+  const [notification, setNotification] = useState<string | null>(null);
+  const [isRecording916, setIsRecording916] = useState(false);
+  const [depthMode, setDepthMode] = useState<"standard" | "neural">("standard");
+  const [modelCached, setModelCached] = useState(false);
+  const [downloadingModel, setDownloadingModel] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
+  const [showNeuralPrompt, setShowNeuralPrompt] = useState(false);
+
+  useEffect(() => {
+    let unmounted = false;
+    void (async () => {
+      const cached = await isModelCached();
+      if (unmounted) return;
+      setModelCached(cached);
+      if (!cached) {
+        // Start non-blocking background download after initial scene settles
+        window.setTimeout(async () => {
+          if (unmounted) return;
+          setDownloadingModel(true);
+          const ok = await downloadAndCacheModel((p) => {
+            if (!unmounted) setDownloadProgress(p.percent);
+          });
+          if (unmounted) return;
+          setDownloadingModel(false);
+          if (ok) {
+            setModelCached(true);
+            setShowNeuralPrompt(true);
+          }
+        }, 2500);
+      }
+    })();
+    return () => {
+      unmounted = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const engine = new ParticleEngine(canvas);
+    engineRef.current = engine;
+    engine.onState = setAnim;
+    setGlOk(engine.supported);
+    if (engine.supported) {
+      engine.load(makeCloud(32000));
+      engine.play("idle");
+      engine.assemble = 1;
+      engine.targetAssemble = 1;
+      engine.start();
+    }
+    void (async () => {
+      try {
+        await preloadVision();
+        setVisionReady(true);
+      } catch {
+        setVisionReady(false);
+      }
+      try {
+        setBusy({ stage: "Composing a study", fraction: 0.2 });
+        const study = paintStudy(0);
+        const cache = await generateFromCanvas(study, paramsRef.current, (p) => setBusy(p));
+        cacheRef.current = cache;
+        engine.load(cache.set);
+        engine.setDrawCount(paramsRef.current.particles);
+        engine.setPointSize(paramsRef.current.size);
+        engine.setColorMode(paramsRef.current.colorStyle ?? (paramsRef.current.color ? "color" : "mono"));
+        engine.setColorMix(paramsRef.current.colorMix ?? 0.5);
+        engine.setInvert(paramsRef.current.invert);
+        engine.setMotionSensor(paramsRef.current.motionSensor ?? false);
+        engine.setSlowSway(paramsRef.current.slowSway ?? true);
+        engine.play("build");
+        setHasPortrait(true);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not start the study.");
+      } finally {
+        setBusy(null);
+      }
+    })();
+    return () => engine.dispose();
+  }, []);
+
+  useEffect(() => {
+    paramsRef.current = params;
+    writeHash(params);
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.setDrawCount(params.particles);
+    engine.setPointSize(params.size);
+    engine.setColorMode(params.colorStyle ?? (params.color ? "color" : "mono"));
+    engine.setColorMix(params.colorMix ?? 0.5);
+    engine.setInvert(params.invert);
+  }, [params]);
+
+  const runSource = useCallback(async (job: () => Promise<PipelineCache>, hideHero = true) => {
+    setError(null);
+    setBusy({ stage: "Starting", fraction: 0.02 });
+    try {
+      const cache = await job();
+      cacheRef.current = cache;
+      const engine = engineRef.current;
+      if (!engine) return;
+      engine.load(cache.set);
+      engine.setDrawCount(paramsRef.current.particles);
+      engine.setPointSize(paramsRef.current.size);
+      engine.setColorMode(paramsRef.current.colorStyle ?? (paramsRef.current.color ? "color" : "mono"));
+      engine.setColorMix(paramsRef.current.colorMix ?? 0.5);
+      engine.setInvert(paramsRef.current.invert);
+      engine.play("build");
+      setHasPortrait(true);
+      setDepthMode("standard");
+      if (modelCached && cache.subjectType === "face") {
+        window.setTimeout(() => setShowNeuralPrompt(true), 1200);
+      }
+      if (hideHero) setHero(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not build this portrait.");
+    } finally {
+      setBusy(null);
+    }
+  }, [modelCached]);
+
+  const handleDepthModeChange = (mode: "standard" | "neural") => {
+    const engine = engineRef.current;
+    const cache = cacheRef.current;
+    if (!engine || !cache) return;
+
+    setDepthMode(mode);
+    setBusy({ stage: mode === "neural" ? "Applying HD Neural Depth" : "Restoring Geometric Relief", fraction: 0.6 });
+    window.setTimeout(() => {
+      try {
+        const set = switchDepthMode(cache, mode, paramsRef.current);
+        engine.load(set, { scatter: false });
+        engine.setDrawCount(paramsRef.current.particles);
+        engine.play("assemble");
+        setNotification(
+          mode === "neural"
+            ? "✨ HD Neural Depth applied! You can revert anytime in the Depth panel."
+            : "Reverted to Standard Geometric dome.",
+        );
+        window.setTimeout(() => setNotification(null), 4500);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not change depth mode");
+      } finally {
+        setBusy(null);
+      }
+    }, 50);
+  };
+
+  const onFile = (file: File | undefined) => {
+    if (!file) return;
+    void runSource(() => generateFromFile(file, paramsRef.current, setBusy));
+  };
+
+  const onSample = (src: string) => {
+    void runSource(() => generateFromUrl(src, paramsRef.current, setBusy));
+  };
+
+  const patch = (partial: Partial<Params>) => {
+    setParams((p) => {
+      const next = { ...p, ...partial };
+      paramsRef.current = next;
+      const engine = engineRef.current;
+      const cache = cacheRef.current;
+      if (!engine || !cache) return next;
+
+      if (partial.particles != null) engine.setDrawCount(next.particles);
+      if (partial.colorStyle != null) engine.setColorMode(next.colorStyle);
+      else if (partial.color != null) engine.setColorMode(next.color);
+      if (partial.colorMix != null) engine.setColorMix(next.colorMix);
+      if (partial.invert != null) {
+        engine.setInvert(next.invert);
+      }
+      if (partial.depth != null) {
+        applyDepthScale(cache.set, next.depth);
+        engine.updateHomeZ(cache.set);
+      }
+      if (partial.motionSensor != null) {
+        engine.setMotionSensor(next.motionSensor);
+      }
+      if (partial.slowSway != null) {
+        engine.setSlowSway(next.slowSway);
+      }
+
+      const fieldKeys: (keyof Params)[] = [
+        "contrast", "detail", "feature", "floor", "softness", "invert", "removeBg",
+      ];
+      const needsField = fieldKeys.some((k) => k in partial);
+      const needsCrop = "straighten" in partial;
+
+      if (needsCrop || needsField) {
+        window.clearTimeout(rebuildTimer.current);
+        rebuildTimer.current = window.setTimeout(() => {
+          setBusy({ stage: "Updating the field", fraction: 0.5 });
+          try {
+            const set = needsCrop ? recrop(cache, paramsRef.current) : rebuildField(cache, paramsRef.current);
+            engine.load(set, { scatter: false });
+            engine.setDrawCount(paramsRef.current.particles);
+            engine.play("assemble");
+          } catch (err) {
+            setError(err instanceof Error ? err.message : "Update failed");
+          } finally {
+            setBusy(null);
+          }
+        }, 90);
+      }
+      return next;
+    });
+  };
+
+  const play = (name: EffectName) => engineRef.current?.play(name);
+
+  const onTextSubmit = (text: string, theme: "gold" | "cyberpunk" | "monochrome" | "emerald") => {
+    void runSource(() => generateFromText(text, paramsRef.current, { colorTheme: theme }, setBusy));
+  };
+
+  const handleStartRecord = async (options: RecordOptions) => {
+    const engine = engineRef.current;
+    if (!engine || recording) return;
+    if (options.aspect916) setIsRecording916(true);
+    setRecording("Preparing Recording...");
+    setHero(false);
+    setSheet(false);
+    try {
+      const blob = await recordTimeline(engine, options, (label) => setRecording(label));
+      const ext = blob.type.includes("mp4") ? "mp4" : "webm";
+      const suffix = options.aspect916 ? "-9x16-whatsapp" : "";
+      downloadBlob(blob, `face-particles${suffix}.${ext}`);
+      setNotification(`Video export ready (${ext.toUpperCase()})! Formatted with audio track for WhatsApp Status.`);
+      window.setTimeout(() => setNotification(null), 6500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not record.");
+    } finally {
+      setIsRecording916(false);
+      setRecording(null);
+    }
+  };
+
+  const onSaveStill = async () => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    try {
+      const blob = await engine.snapshot();
+      const filename = params.invert ? "face-particles-print.png" : "face-particles.png";
+      downloadBlob(blob, filename);
+    } catch {
+      setError("Could not save a still.");
+    }
+  };
+
+  return (
+    <main
+      className={cn(
+        "relative h-dvh w-full overflow-hidden transition-colors duration-300",
+        params.invert ? "bg-white text-neutral-900" : "bg-bg text-fg",
+      )}
+    >
+      <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
+        <canvas
+          ref={canvasRef}
+          className={cn(
+            "touch-none transition-[width,height,border-radius,box-shadow] duration-300",
+            isRecording916
+              ? "relative aspect-[9/16] h-full max-h-[100dvh] max-w-[calc(100dvh*9/16)] shadow-2xl rounded-2xl border border-white/20"
+              : "size-full",
+          )}
+          aria-label="Particle portrait stage"
+        />
+      </div>
+
+      {!glOk && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-bg px-8 text-center">
+          <div className="max-w-sm">
+            <h1 className="font-display text-3xl">This device cannot draw particles</h1>
+            <p className="mt-3 text-sm text-fg-muted">
+              Face Particles needs WebGL2, which this browser does not expose.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {busy && (
+        <div className="pointer-events-none absolute inset-x-0 top-[max(1.25rem,env(safe-area-inset-top))] z-20 flex justify-center px-4">
+          <div
+            className={cn(
+              "flex items-center gap-3 rounded-[var(--radius-lg)] border px-4 py-2.5 text-sm shadow-lg backdrop-blur-md",
+              params.invert
+                ? "border-neutral-300 bg-white/90 text-neutral-800"
+                : "border-border bg-bg-elevated/90 text-fg-muted",
+            )}
+          >
+            <Loader2 className="size-4 animate-spin text-accent" />
+            <span>{busy.stage}</span>
+            <span className="tabular-nums text-fg-subtle">{Math.round(busy.fraction * 100)}%</span>
+          </div>
+        </div>
+      )}
+
+      {recording && (
+        <div className="pointer-events-none absolute inset-x-0 top-[max(1.25rem,env(safe-area-inset-top))] z-30 flex justify-center px-4">
+          <div className="flex items-center gap-2.5 rounded-full border border-red-500/40 bg-red-950/85 px-4 py-2 text-xs font-semibold text-red-100 shadow-2xl backdrop-blur-md animate-pulse">
+            <span className="relative flex size-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+              <span className="relative inline-flex size-2.5 rounded-full bg-red-500" />
+            </span>
+            <span>Recording · {recording}</span>
+          </div>
+        </div>
+      )}
+
+      {notification && (
+        <div className="pointer-events-none absolute inset-x-0 top-[max(1.25rem,env(safe-area-inset-top))] z-40 flex justify-center px-4 animate-in fade-in duration-300">
+          <div className="flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-950/90 px-4 py-2 text-xs font-medium text-emerald-100 shadow-2xl backdrop-blur-md">
+            <span>✓</span>
+            <span>{notification}</span>
+          </div>
+        </div>
+      )}
+
+      {showNeuralPrompt && depthMode === "standard" && hasPortrait && !recording && !busy && (
+        <div className="absolute inset-x-0 top-[max(4.25rem,calc(env(safe-area-inset-top)+3rem))] z-40 flex justify-center px-4 animate-in fade-in slide-in-from-top-2 duration-300">
+          <div
+            className={cn(
+              "flex items-center gap-3 rounded-2xl border px-3.5 py-2 text-xs shadow-2xl backdrop-blur-md max-w-md w-full justify-between",
+              params.invert
+                ? "border-neutral-300 bg-white/95 text-neutral-900 shadow-neutral-950/10"
+                : "border-accent/40 bg-bg-elevated/95 text-fg shadow-black/40",
+            )}
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Sparkles className="size-4 shrink-0 text-accent animate-pulse" />
+              <div className="min-w-0">
+                <p className="font-semibold leading-tight truncate">HD Neural Depth Ready</p>
+                <p className={cn("text-[11px] truncate", params.invert ? "text-neutral-500" : "text-fg-subtle")}>
+                  Cached locally in browser. Apply volumetric AI relief?
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Button
+                size="sm"
+                variant="primary"
+                className="h-7 text-xs px-2.5"
+                onClick={() => {
+                  setShowNeuralPrompt(false);
+                  handleDepthModeChange("neural");
+                }}
+              >
+                Apply HD
+              </Button>
+              <button
+                type="button"
+                onClick={() => setShowNeuralPrompt(false)}
+                className={cn(
+                  "p-1 rounded-md text-xs",
+                  params.invert ? "text-neutral-500 hover:text-neutral-900" : "text-fg-subtle hover:text-fg",
+                )}
+                aria-label="Dismiss"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <header className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between px-4 pt-[max(0.75rem,env(safe-area-inset-top))]">
+        <div className="pointer-events-auto">
+          <p
+            className={cn(
+              "font-display text-xl tracking-tight transition-colors",
+              params.invert ? "text-neutral-900" : "text-fg",
+            )}
+          >
+            Face Particles
+          </p>
+          <p
+            className={cn(
+              "text-[11px] uppercase tracking-[0.18em] transition-colors",
+              params.invert ? "text-neutral-600 font-semibold" : "text-fg-subtle",
+            )}
+          >
+            On-device
+          </p>
+        </div>
+        <div className="pointer-events-auto flex gap-2">
+          {!hero && (
+            <Button
+              variant="secondary"
+              size="icon"
+              aria-label="New photo"
+              onClick={() => setHero(true)}
+              className={
+                params.invert
+                  ? "border-neutral-300 bg-white/85 text-neutral-900 shadow-sm hover:bg-white backdrop-blur-md"
+                  : ""
+              }
+            >
+              <ImagePlus className="size-5" />
+            </Button>
+          )}
+          <Button
+            variant="secondary"
+            size="icon"
+            aria-label="3D Typography"
+            title="Sculpt 3D Typography Particles"
+            onClick={() => setTextDialogOpen(true)}
+            className={
+              params.invert
+                ? "border-neutral-300 bg-white/85 text-neutral-900 shadow-sm hover:bg-white backdrop-blur-md"
+                : ""
+            }
+          >
+            <Type className="size-5" />
+          </Button>
+          <Button
+            variant="secondary"
+            size="icon"
+            aria-label="Save still"
+            title={params.invert ? "Export print-ready artwork (PNG)" : "Save still image (PNG)"}
+            disabled={!hasPortrait}
+            onClick={() => void onSaveStill()}
+            className={
+              params.invert
+                ? "border-neutral-300 bg-white/85 text-neutral-900 shadow-sm hover:bg-white backdrop-blur-md"
+                : ""
+            }
+          >
+            <Download className="size-5" />
+          </Button>
+          <Button
+            variant="secondary"
+            size="icon"
+            aria-label="A4 Print & Vector Studio"
+            title="Open A4 Print & Vector Studio"
+            disabled={!hasPortrait}
+            onClick={() => setPrintDialogOpen(true)}
+            className={
+              params.invert
+                ? "border-neutral-300 bg-white/85 text-neutral-900 shadow-sm hover:bg-white backdrop-blur-md"
+                : ""
+            }
+          >
+            <Printer className="size-5" />
+          </Button>
+          <Button
+            variant="primary"
+            size="icon"
+            aria-label="Record Video (9:16 Status / Reels)"
+            title="Record Video (9:16 Status / Reels)"
+            disabled={!hasPortrait || Boolean(recording)}
+            onClick={() => setRecordDialogOpen(true)}
+            className={
+              params.invert ? "bg-neutral-900 text-white hover:bg-neutral-800 shadow-sm" : ""
+            }
+          >
+            {recording ? <Loader2 className="size-5 animate-spin" /> : <Video className="size-5" />}
+          </Button>
+        </div>
+      </header>
+
+      {hero && (
+        <section className="absolute inset-x-0 bottom-0 z-10 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-16 bg-gradient-to-t from-bg via-bg/85 to-transparent">
+          <div className="mx-auto max-w-md rounded-[28px] border border-border bg-bg-elevated/85 p-5">
+            <h1 className="font-display text-[2rem] leading-tight tracking-tight">
+              A portrait that comes apart in your hands.
+            </h1>
+            <p className="mt-2 text-sm leading-relaxed text-fg-muted">
+              Photos stay on this device. Drag through the cloud, then make it yours.
+            </p>
+            <div className="mt-5 grid grid-cols-3 gap-2">
+              <Button className="w-full" onClick={() => fileRef.current?.click()}>
+                <Upload className="size-4" />
+                Upload
+              </Button>
+              <Button variant="secondary" className="w-full" onClick={() => camRef.current?.click()}>
+                <Camera className="size-4" />
+                Camera
+              </Button>
+              <Button variant="secondary" className="w-full" onClick={() => setTextDialogOpen(true)}>
+                <Type className="size-4" />
+                3D Words
+              </Button>
+            </div>
+            <p className="mt-4 text-[11px] uppercase tracking-[0.16em] text-fg-subtle">Try a study</p>
+            <div className="mt-2 flex gap-3">
+              {SAMPLES.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => onSample(s.src)}
+                  className="group flex flex-1 flex-col items-center gap-1.5"
+                >
+                  <span className="block aspect-[3/4] w-full overflow-hidden rounded-[var(--radius-md)] border border-border bg-bg-subtle">
+                    <img
+                      src={s.src}
+                      alt={s.label}
+                      className="size-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+                    />
+                  </span>
+                  <span className="text-xs text-fg-muted">{s.label}</span>
+                </button>
+              ))}
+            </div>
+            <p className="mt-3 text-center text-[11px] text-fg-subtle">
+              {visionReady ? "Vision models ready" : "Loading face analysis in the background"}
+            </p>
+          </div>
+        </section>
+      )}
+
+      {!hero && hasPortrait && !recording && (
+        <>
+          <div
+            className={cn(
+              "pointer-events-none absolute inset-x-0 bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-10 flex justify-center px-3 transition-opacity duration-200",
+              sheet ? "pointer-events-none opacity-0" : "opacity-100",
+            )}
+          >
+            <div
+              className={cn(
+                "pointer-events-auto flex max-w-full gap-1 overflow-x-auto rounded-full border p-1 shadow-lg backdrop-blur-xl transition-colors",
+                params.invert
+                  ? "border-neutral-300/90 bg-white/90 text-neutral-800 shadow-neutral-200/50"
+                  : "border-border bg-bg-elevated/90 text-fg-muted",
+              )}
+            >
+              {(
+                [
+                  ["disassemble", "Break", Aperture],
+                  ["ripple", "Ripple", Contrast],
+                  ["fill", "Fill", ScanFace],
+                ] as const
+              ).map(([id, label, Icon]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => play(id)}
+                  className={cn(
+                    "flex h-10 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-colors",
+                    params.invert
+                      ? "text-neutral-700 hover:bg-neutral-100 hover:text-neutral-950"
+                      : "text-fg-muted hover:bg-bg-subtle hover:text-fg",
+                    anim === "effect" && (params.invert ? "text-neutral-950 font-semibold" : "text-fg"),
+                  )}
+                >
+                  <Icon className="size-3.5" />
+                  {label}
+                </button>
+              ))}
+
+              <div
+                className={cn(
+                  "my-1.5 w-px self-stretch",
+                  params.invert ? "bg-neutral-200" : "bg-border/60",
+                )}
+              />
+
+              <button
+                type="button"
+                onClick={() => {
+                  const nextSway = !(params.slowSway ?? true);
+                  patch({ slowSway: nextSway });
+                  setNotification(nextSway ? "Gentle sway enabled" : "Gentle sway paused");
+                  window.setTimeout(() => setNotification(null), 2500);
+                }}
+                title={params.slowSway ?? true ? "Pause sway" : "Resume slow sway"}
+                className={cn(
+                  "flex h-10 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-colors",
+                  (params.slowSway ?? true)
+                    ? params.invert
+                      ? "bg-neutral-100 text-neutral-950 font-semibold"
+                      : "bg-accent/15 text-fg font-semibold"
+                    : params.invert
+                      ? "text-neutral-500 hover:text-neutral-800"
+                      : "text-fg-subtle hover:text-fg",
+                )}
+              >
+                <Waves className="size-3.5 text-accent" />
+                <span>{(params.slowSway ?? true) ? "Swaying" : "Static"}</span>
+              </button>
+            </div>
+          </div>
+
+          <div
+            className={cn(
+              "pointer-events-auto absolute inset-x-0 bottom-0 z-20 flex justify-center transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+              sheet ? "translate-y-0" : "translate-y-[calc(100%-3rem)]",
+            )}
+          >
+            <div
+              className={cn(
+                "flex w-full max-w-lg flex-col max-h-[min(70dvh,500px)] rounded-t-[28px] border shadow-2xl backdrop-blur-xl transition-colors",
+                params.invert
+                  ? "border-neutral-300/80 bg-white/95 text-neutral-900 shadow-neutral-900/10"
+                  : "border-border bg-bg-elevated/95 text-fg",
+              )}
+            >
+              <button
+                type="button"
+                className={cn(
+                  "shrink-0 flex w-full flex-col items-center pb-2 pt-2.5 transition-colors border-b",
+                  params.invert
+                    ? "text-neutral-700 hover:text-neutral-950 border-neutral-200"
+                    : "text-fg-muted hover:text-fg border-border/40",
+                )}
+                onClick={() => setSheet((s) => !s)}
+                aria-expanded={sheet}
+              >
+                <span
+                  className={cn(
+                    "mb-1.5 h-1.5 w-12 rounded-full",
+                    params.invert ? "bg-neutral-300" : "bg-border-strong",
+                  )}
+                />
+                <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.16em]">
+                  Structure
+                  <ChevronUp className={cn("size-3.5 transition-transform duration-200", sheet ? "rotate-0" : "rotate-180")} />
+                </span>
+              </button>
+
+              <div className="flex-1 overflow-y-auto overscroll-contain px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3 touch-pan-y">
+                <div className="flex flex-col gap-2.5 pb-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span
+                      className={cn(
+                        "text-xs font-medium uppercase tracking-[0.14em]",
+                        params.invert ? "text-neutral-500" : "text-fg-subtle",
+                      )}
+                    >
+                      Particle Palette
+                    </span>
+                    <div className="w-32">
+                      <ToggleRow
+                        label="Invert"
+                        icon={<FlipHorizontal2 className="size-3.5" />}
+                        checked={params.invert}
+                        onCheckedChange={(v) => patch({ invert: v })}
+                        invert={params.invert}
+                      />
+                    </div>
+                  </div>
+
+                  <div
+                    className={cn(
+                      "grid grid-cols-3 gap-1 rounded-xl border p-1",
+                      params.invert
+                        ? "border-neutral-200 bg-neutral-100"
+                        : "border-border bg-bg-subtle",
+                    )}
+                  >
+                    {(
+                      [
+                        ["mono", "Mono", "B&W"],
+                        ["hybrid", "Hybrid", "Color + B&W"],
+                        ["color", "Color", "Full RGB"],
+                      ] as const
+                    ).map(([mode, label, sub]) => {
+                      const currentMode = params.colorStyle ?? (params.color ? "color" : "mono");
+                      const active = currentMode === mode;
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() =>
+                            patch({
+                              colorStyle: mode,
+                              color: mode !== "mono",
+                            })
+                          }
+                          className={cn(
+                            "flex flex-col items-center justify-center rounded-lg py-1.5 px-1 text-center transition-all",
+                            active
+                              ? params.invert
+                                ? "bg-white text-neutral-950 shadow-sm font-semibold border border-neutral-300"
+                                : "bg-bg-elevated text-fg shadow-sm font-semibold border border-border/80"
+                              : params.invert
+                                ? "text-neutral-600 hover:bg-white/60 hover:text-neutral-900"
+                                : "text-fg-muted hover:bg-bg/50 hover:text-fg",
+                          )}
+                        >
+                          <span className="text-xs">{label}</span>
+                          <span
+                            className={cn(
+                              "text-[10px] tracking-tight",
+                              params.invert ? "text-neutral-500" : "text-fg-subtle",
+                            )}
+                          >
+                            {sub}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {(params.colorStyle ?? (params.color ? "color" : "mono")) === "hybrid" && (
+                    <div
+                      className={cn(
+                        "mt-1 rounded-xl border p-2.5",
+                        params.invert
+                          ? "border-neutral-200 bg-neutral-50"
+                          : "border-border/60 bg-bg/60",
+                      )}
+                    >
+                      <Field
+                        label="Hybrid Color Ratio (Derived from Face)"
+                        value={`${Math.round((params.colorMix ?? 0.5) * 100)}% Color · ${Math.round((1 - (params.colorMix ?? 0.5)) * 100)}% B&W`}
+                        invert={params.invert}
+                      >
+                        <Slider
+                          min={0.1}
+                          max={0.9}
+                          step={0.05}
+                          value={[params.colorMix ?? 0.5]}
+                          onValueChange={([v]) => patch({ colorMix: v ?? 0.5 })}
+                          invert={params.invert}
+                        />
+                      </Field>
+                      <p
+                        className={cn(
+                          "mt-1 text-[11px]",
+                          params.invert ? "text-neutral-500" : "text-fg-subtle",
+                        )}
+                      >
+                        Interweaves photorealistic colors from the face with silver monochrome particles.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <Field label="Particles" value={`${Math.round(params.particles / 1000)}k`} invert={params.invert}>
+                  <Slider
+                    min={5000}
+                    max={100000}
+                    step={1000}
+                    value={[params.particles]}
+                    onValueChange={([v]) => patch({ particles: v ?? params.particles })}
+                    invert={params.invert}
+                  />
+                </Field>
+                <Field label="Size" value={params.size.toFixed(1)} invert={params.invert}>
+                  <Slider
+                    min={0.8}
+                    max={4}
+                    step={0.1}
+                    value={[params.size]}
+                    onValueChange={([v]) => patch({ size: v ?? params.size })}
+                    invert={params.invert}
+                  />
+                </Field>
+                <Field label="Contrast" value={params.contrast.toFixed(2)} invert={params.invert}>
+                  <Slider
+                    min={0.6}
+                    max={2}
+                    step={0.05}
+                    value={[params.contrast]}
+                    onValueChange={([v]) => patch({ contrast: v ?? params.contrast })}
+                    invert={params.invert}
+                  />
+                </Field>
+                <Field label="Detail" value={params.detail.toFixed(2)} invert={params.invert}>
+                  <Slider
+                    min={0}
+                    max={2}
+                    step={0.05}
+                    value={[params.detail]}
+                    onValueChange={([v]) => patch({ detail: v ?? params.detail })}
+                    invert={params.invert}
+                  />
+                </Field>
+                <Field label="Features" value={params.feature.toFixed(2)} invert={params.invert}>
+                  <Slider
+                    min={0}
+                    max={1.5}
+                    step={0.05}
+                    value={[params.feature]}
+                    onValueChange={([v]) => patch({ feature: v ?? params.feature })}
+                    invert={params.invert}
+                  />
+                </Field>
+                <Field label="Shadow lift" value={params.floor.toFixed(2)} invert={params.invert}>
+                  <Slider
+                    min={0}
+                    max={0.3}
+                    step={0.01}
+                    value={[params.floor]}
+                    onValueChange={([v]) => patch({ floor: v ?? params.floor })}
+                    invert={params.invert}
+                  />
+                </Field>
+                <Field label="Silhouette" value={params.softness.toFixed(2)} invert={params.invert}>
+                  <Slider
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={[params.softness]}
+                    onValueChange={([v]) => patch({ softness: v ?? params.softness })}
+                    invert={params.invert}
+                  />
+                </Field>
+                <Field label="Depth" value={params.depth.toFixed(2)} invert={params.invert}>
+                  <Slider
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={[params.depth]}
+                    onValueChange={([v]) => patch({ depth: v ?? params.depth })}
+                    invert={params.invert}
+                  />
+                </Field>
+
+                {/* 3D Relief Engine Architecture */}
+                <div
+                  className={cn(
+                    "mt-2.5 rounded-xl border p-2.5 transition-all",
+                    params.invert
+                      ? "border-neutral-200 bg-neutral-50/80"
+                      : "border-border/70 bg-bg-elevated/50",
+                  )}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span
+                      className={cn(
+                        "text-[11px] font-semibold uppercase tracking-[0.14em]",
+                        params.invert ? "text-neutral-700" : "text-fg-muted",
+                      )}
+                    >
+                      3D Relief Engine
+                    </span>
+                    <span
+                      className={cn(
+                        "text-[10px]",
+                        modelCached
+                          ? "text-emerald-500 font-medium"
+                          : downloadingModel
+                            ? "text-accent font-medium animate-pulse"
+                            : "text-fg-subtle",
+                      )}
+                    >
+                      {modelCached
+                        ? "✓ Cached in browser (0 MB)"
+                        : downloadingModel
+                          ? `Downloading AI (${downloadProgress ?? 0}%)`
+                          : "Fast dome"}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleDepthModeChange("standard")}
+                      className={cn(
+                        "rounded-lg py-1.5 px-2 text-xs font-medium border transition-all text-center flex items-center justify-center gap-1.5",
+                        depthMode === "standard"
+                          ? params.invert
+                            ? "border-neutral-400 bg-white text-neutral-950 font-semibold shadow-xs"
+                            : "border-accent bg-accent/20 text-fg font-semibold shadow-xs"
+                          : params.invert
+                            ? "border-neutral-200 text-neutral-600 hover:bg-neutral-100"
+                            : "border-border/60 text-fg-muted hover:border-border",
+                      )}
+                    >
+                      <span>Standard Dome</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDepthModeChange("neural")}
+                      className={cn(
+                        "rounded-lg py-1.5 px-2 text-xs font-medium border transition-all text-center flex items-center justify-center gap-1.5",
+                        depthMode === "neural"
+                          ? params.invert
+                            ? "border-neutral-400 bg-white text-neutral-950 font-semibold shadow-xs"
+                            : "border-accent bg-accent/20 text-fg font-semibold shadow-xs"
+                          : params.invert
+                            ? "border-neutral-200 text-neutral-600 hover:bg-neutral-100"
+                            : "border-border/60 text-fg-muted hover:border-border",
+                      )}
+                    >
+                      <Sparkles className="size-3 text-accent" />
+                      <span>HD Neural Depth</span>
+                    </button>
+                  </div>
+                  {depthMode === "neural" && (
+                    <div className="mt-2 flex items-center justify-between text-[11px]">
+                      <span className={params.invert ? "text-neutral-500" : "text-fg-subtle"}>
+                        Volumetric anatomical surface
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleDepthModeChange("standard")}
+                        className={cn(
+                          "underline font-medium hover:opacity-80 transition-opacity",
+                          params.invert ? "text-neutral-900" : "text-accent",
+                        )}
+                      >
+                        Revert to standard
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-2 grid grid-cols-2 gap-3">
+                  <ToggleRow
+                    label="Straighten"
+                    checked={params.straighten}
+                    onCheckedChange={(v) => patch({ straighten: v })}
+                    invert={params.invert}
+                  />
+                  <ToggleRow
+                    label="Cut background"
+                    checked={params.removeBg}
+                    onCheckedChange={(v) => patch({ removeBg: v })}
+                    invert={params.invert}
+                  />
+                </div>
+
+                {/* Motion & Proximity / Gyro Controls */}
+                <div
+                  className={cn(
+                    "mt-3 rounded-xl border p-2.5 transition-all",
+                    params.invert
+                      ? "border-neutral-200 bg-neutral-50/80"
+                      : "border-border/70 bg-bg-elevated/50",
+                  )}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span
+                      className={cn(
+                        "text-[11px] font-semibold uppercase tracking-[0.14em]",
+                        params.invert ? "text-neutral-700" : "text-fg-muted",
+                      )}
+                    >
+                      Motion & View
+                    </span>
+                    <span
+                      className={cn(
+                        "text-[10px]",
+                        params.motionSensor ? "text-accent font-medium" : "text-fg-subtle",
+                      )}
+                    >
+                      {params.motionSensor ? "Tilt Sensor ON" : "Tilt Sensor OFF (Stable)"}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2">
+                    <ToggleRow
+                      label="Slow sway (left ↔ right)"
+                      icon={<Waves className="size-3.5 text-accent shrink-0" />}
+                      checked={params.slowSway ?? true}
+                      onCheckedChange={(v) => patch({ slowSway: v })}
+                      invert={params.invert}
+                    />
+                    <ToggleRow
+                      label="Device tilt / motion sensor"
+                      icon={<Smartphone className="size-3.5 text-accent shrink-0" />}
+                      checked={params.motionSensor ?? false}
+                      onCheckedChange={async (v) => {
+                        if (v && engineRef.current) {
+                          const allowed = await engineRef.current.requestGyro();
+                          if (!allowed) {
+                            setNotification("Device motion permission was not granted.");
+                            window.setTimeout(() => setNotification(null), 3000);
+                            return;
+                          }
+                        }
+                        patch({ motionSensor: v });
+                        setNotification(
+                          v
+                            ? "Device tilt sensor enabled."
+                            : "Device tilt disabled. Face will continue gentle slow sway.",
+                        );
+                        window.setTimeout(() => setNotification(null), 3000);
+                      }}
+                      invert={params.invert}
+                    />
+                  </div>
+                  <p
+                    className={cn(
+                      "mt-2 text-[10px] leading-relaxed",
+                      params.invert ? "text-neutral-500" : "text-fg-subtle",
+                    )}
+                  >
+                    Keep tilt sensor off to avoid shaking when holding or moving your phone. The face will gently sway back and forth on its own.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {recording && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-8 z-20 flex justify-center">
+          <div className="rounded-full border border-border bg-bg-elevated/90 px-4 py-2 text-xs uppercase tracking-[0.18em] text-fg-muted">
+            Recording · {recording}
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div className="absolute inset-x-4 top-[5.5rem] z-30 mx-auto max-w-md rounded-[var(--radius-md)] border border-border bg-bg-elevated px-3 py-2 text-sm text-danger">
+          {error}
+        </div>
+      )}
+
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => onFile(e.target.files?.[0])}
+      />
+      <input
+        ref={camRef}
+        type="file"
+        accept="image/*"
+        capture="user"
+        className="hidden"
+        onChange={(e) => onFile(e.target.files?.[0])}
+      />
+
+      <RecordDialog
+        open={recordDialogOpen}
+        onClose={() => setRecordDialogOpen(false)}
+        onStart={handleStartRecord}
+        invert={params.invert}
+      />
+
+      <TextDialog
+        open={textDialogOpen}
+        onClose={() => setTextDialogOpen(false)}
+        onSubmit={onTextSubmit}
+        invert={params.invert}
+      />
+
+      <PrintDialog
+        open={printDialogOpen}
+        onClose={() => setPrintDialogOpen(false)}
+        particleSet={cacheRef.current?.set ?? engineRef.current?.getParticleSet() ?? null}
+        pipelineCache={cacheRef.current}
+        currentYaw={engineRef.current?.getOrbit().yaw ?? 0}
+        currentPitch={engineRef.current?.getOrbit().pitch ?? 0.04}
+        invert={params.invert}
+      />
+    </main>
+  );
+}
+
+function Field({
+  label,
+  value,
+  children,
+  invert,
+}: {
+  label: string;
+  value: string;
+  children: ReactNode;
+  invert?: boolean;
+}) {
+  return (
+    <label className="mb-2 block">
+      <span
+        className={cn(
+          "mb-1 flex items-center justify-between text-xs font-medium transition-colors",
+          invert ? "text-neutral-700" : "text-fg-muted",
+        )}
+      >
+        {label}
+        <span
+          className={cn(
+            "tabular-nums transition-colors",
+            invert ? "text-neutral-600 font-semibold" : "text-fg-subtle",
+          )}
+        >
+          {value}
+        </span>
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function ToggleRow({
+  label,
+  checked,
+  onCheckedChange,
+  icon,
+  invert,
+}: {
+  label: string;
+  checked: boolean;
+  onCheckedChange: (v: boolean) => void;
+  icon?: ReactNode;
+  invert?: boolean;
+}) {
+  return (
+    <label
+      className={cn(
+        "flex h-11 items-center justify-between rounded-[var(--radius-md)] border px-3 text-sm transition-colors",
+        invert
+          ? "border-neutral-300 bg-white text-neutral-900 shadow-xs"
+          : "border-border bg-bg text-fg",
+      )}
+    >
+      <span
+        className={cn(
+          "flex items-center gap-1.5 transition-colors",
+          invert ? "text-neutral-800 font-medium" : "text-fg-muted",
+        )}
+      >
+        {icon}
+        {label}
+      </span>
+      <Switch checked={checked} onCheckedChange={onCheckedChange} invert={invert} />
+    </label>
+  );
+}
