@@ -40,7 +40,7 @@ import { paintStudy } from "@/lib/face-particles/procedural";
 import { applyDepthScale, makeCloud } from "@/lib/face-particles/sampler";
 import { downloadBlob, recordTimeline, type RecordOptions } from "@/lib/face-particles/record";
 import { preloadVision } from "@/lib/face-particles/vision";
-import { isModelCached, downloadAndCacheModel } from "@/lib/face-particles/neural/model-cache";
+import { isModelCached, downloadAndCacheModel, getModelCacheSize } from "@/lib/face-particles/neural/model-cache";
 import { RecordDialog } from "@/components/face-particles/record-dialog";
 import { PrintDialog } from "@/components/face-particles/print-dialog";
 import { TextDialog } from "@/components/face-particles/text-dialog";
@@ -437,7 +437,7 @@ export function FaceParticlesApp() {
         <canvas
           ref={canvasRef}
           className={cn(
-            "touch-none transition-[width,height,border-radius,box-shadow] duration-300",
+            "touch-none",
             isRecording916
               ? "relative aspect-[9/16] h-full max-h-[100dvh] max-w-[calc(100dvh*9/16)] shadow-2xl rounded-2xl border border-white/20"
               : "size-full",
@@ -1084,7 +1084,7 @@ export function FaceParticlesApp() {
                       )}
                     >
                       {modelCached
-                        ? "✓ Cached in browser (0 MB)"
+                        ? `✓ Cached locally (${getModelCacheSize()})`
                         : downloadingModel
                           ? `Downloading AI (${downloadProgress ?? 0}%)`
                           : "Fast dome"}

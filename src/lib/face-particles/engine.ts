@@ -85,6 +85,7 @@ export class ParticleEngine {
   private renderScale = 1;
   private recordAspect: number | null = null;
   private recordDims: [number, number] | null = null;
+  private refClientHeight = 720;
 
   yaw = 0;
   pitch = 0.04;
@@ -549,6 +550,7 @@ export class ParticleEngine {
   setRecordingAspect(aspect: number | null, width?: number, height?: number): void {
     this.recordAspect = aspect;
     if (aspect && width && height) {
+      this.refClientHeight = this.canvas.clientHeight || 720;
       const gl = this.gl;
       if (gl) {
         const maxDims = gl.getParameter(gl.MAX_VIEWPORT_DIMS) as [number, number] | null;
@@ -815,7 +817,7 @@ export class ParticleEngine {
     // When recording to a fixed high-resolution buffer (e.g. 1080x1920), scale DPR so particles
     // retain identical visual size, density, and opacity as on the interactive canvas
     const dpr = this.recordDims
-      ? (this.recordDims[1] / Math.max(1, this.canvas.clientHeight || 720)) * baseDpr
+      ? this.recordDims[1] / Math.max(1, this.refClientHeight)
       : baseDpr;
     gl.uniform1f(this.uRender.uSize, size);
     gl.uniform1f(this.uRender.uDpr, dpr);

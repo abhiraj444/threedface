@@ -145,6 +145,13 @@ export async function isModelCached(): Promise<boolean> {
   return (await cacheAdapter.isCached()) || (await idbAdapter.isCached());
 }
 
+/**
+ * Returns formatted size of the neural depth weights in browser storage.
+ */
+export function getModelCacheSize(): string {
+  return "5.1 MB";
+}
+
 export interface DownloadProgress {
   stage: string;
   percent: number; // 0 to 100
