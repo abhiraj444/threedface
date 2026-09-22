@@ -95,9 +95,9 @@ export async function recordTimelineExtended(
 ): Promise<RecordResult> {
   const opts: RecordOptions = typeof options === "number" ? { durationSeconds: options } : options;
   const aspect916 = opts.aspect916 ?? true;
-  const sequence = opts.sequence ?? "break_reassemble";
+  const sequence = opts.sequence === "break_reassemble" ? "break" : (opts.sequence ?? "break");
   const colorChoice = opts.colorMode ?? (opts.forceColor ? "color" : "original");
-  const duration = opts.durationSeconds ?? (CHOREOGRAPHY_PRESETS[sequence]?.defaultDuration || 14);
+  const duration = opts.durationSeconds ?? 12;
 
   const mime = pickMime();
   if (mime === null) throw new Error("Recording is not supported in this browser.");
@@ -110,7 +110,8 @@ export async function recordTimelineExtended(
     engine.colorMode = 0;
   }
 
-  const animChoice = opts.animation || (opts.sequence as string);
+  const rawChoice = opts.animation || (opts.sequence as string) || "break";
+  const animChoice = rawChoice === "break_reassemble" ? "break" : rawChoice;
   const isSingleMainAnim = ["break", "wind", "ripple", "fill", "all", "idle"].includes(animChoice);
 
   // Set 9:16 WhatsApp Status / Reels format (1080x1920 or 720x1280)

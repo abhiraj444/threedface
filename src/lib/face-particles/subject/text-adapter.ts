@@ -33,9 +33,9 @@ export function buildTextSubject(
   ctx.fillStyle = "#050506";
   ctx.fillRect(0, 0, outW, outH);
 
-  // Measure text and fit with balanced gallery padding
-  const maxTextW = outW * 0.82;
-  let fontSize = Math.round(outH * 0.22);
+  // Measure text and fit with safe margins for mobile & desktop
+  const maxTextW = outW * 0.70;
+  let fontSize = Math.round(outH * 0.16);
   const fontFam =
     typeof options === "object" && options.fontFamily
       ? options.fontFamily

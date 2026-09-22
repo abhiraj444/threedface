@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Clock,
   Smartphone,
@@ -21,14 +21,21 @@ interface RecordDialogProps {
   onClose: () => void;
   onStart: (options: RecordOptions) => void;
   invert?: boolean;
+  currentAnimation?: RecordSequenceType;
 }
 
-export function RecordDialog({ open, onClose, onStart, invert }: RecordDialogProps) {
-  const [selectedAnimation, setSelectedAnimation] = useState<RecordSequenceType>("break");
+export function RecordDialog({ open, onClose, onStart, invert, currentAnimation }: RecordDialogProps) {
+  const [selectedAnimation, setSelectedAnimation] = useState<RecordSequenceType>(currentAnimation || "break");
   const [duration, setDuration] = useState<number>(12);
   const [aspect916, setAspect916] = useState<boolean>(true);
   const [resolution, setResolution] = useState<"1080p" | "720p">("1080p");
   const [colorChoice, setColorChoice] = useState<"original" | "color" | "mono">("original");
+
+  useEffect(() => {
+    if (open && currentAnimation) {
+      setSelectedAnimation(currentAnimation);
+    }
+  }, [open, currentAnimation]);
 
   if (!open) return null;
 
@@ -158,9 +165,23 @@ export function RecordDialog({ open, onClose, onStart, invert }: RecordDialogPro
                           : "border-border/60 bg-bg/30 hover:border-border text-fg-muted",
                     )}
                   >
-                    <div className="flex items-center gap-1.5">
-                      <Icon className={cn("size-4", active ? (invert ? "text-white" : "text-accent") : "text-fg-subtle")} />
-                      <span className="text-xs font-semibold">{opt.label}</span>
+                    <div className="flex items-center justify-between w-full">
+                      <div className="flex items-center gap-1.5">
+                        <Icon className={cn("size-4", active ? (invert ? "text-white" : "text-accent") : "text-fg-subtle")} />
+                        <span className="text-xs font-semibold">{opt.label}</span>
+                      </div>
+                      {opt.id === currentAnimation && (
+                        <span
+                          className={cn(
+                            "text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wider",
+                            active
+                              ? "bg-white/20 text-white"
+                              : "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30",
+                          )}
+                        >
+                          Main
+                        </span>
+                      )}
                     </div>
                     <span
                       className={cn(

@@ -10,6 +10,7 @@ import { classifySubject } from "./subject/classifier";
 import { buildAnimalSubject } from "./subject/animal-adapter";
 import { buildObjectSubject } from "./subject/object-adapter";
 import { buildTextSubject, type TextAdapterOptions } from "./subject/text-adapter";
+import { buildGraphicSubject } from "./subject/graphic-adapter";
 import type { SubjectField, SubjectType } from "./subject/subject-field";
 import { preprocessImage } from "./preprocess";
 import { computeNeuralDepth } from "./neural/depth-estimator";
@@ -110,8 +111,14 @@ export async function generateFromCanvas(
   onProgress?.({ stage: "Analyzing subject", fraction: 0.2 });
   const vision = await analyze(img);
 
-  // Subject Classifier: Face vs Animal vs Object
+  // Subject Classifier: Face vs Text/Graphic vs Animal vs Object
   const subjectType = classifySubject(img, vision);
+
+  if (subjectType === "text") {
+    onProgress?.({ stage: "Detected graphic / text · Centering and sculpting 3D form", fraction: 0.4 });
+    const graphicSubject = buildGraphicSubject(img, params);
+    return generateFromSubjectField(graphicSubject, params, onProgress);
+  }
 
   if (subjectType === "animal") {
     onProgress?.({ stage: "Detected pet / animal · Fitting volumetric dome", fraction: 0.4 });

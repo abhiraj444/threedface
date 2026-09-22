@@ -5,6 +5,7 @@ import {
   ChevronUp,
   Contrast,
   Download,
+  Eraser,
   FlipHorizontal2,
   ImagePlus,
   Loader2,
@@ -24,6 +25,7 @@ import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { loadParams, SAMPLES, writeHash } from "@/lib/face-particles/config";
 import { ParticleEngine } from "@/lib/face-particles/engine";
+import { EraserToolbar } from "./eraser-toolbar";
 import {
   generateFromCanvas,
   generateFromFile,
@@ -76,6 +78,17 @@ export function FaceParticlesApp() {
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
   const [showNeuralPrompt, setShowNeuralPrompt] = useState(false);
 
+  // Eraser Tool State
+  const [eraserActive, setEraserActive] = useState(false);
+  const [eraserSubmode, setEraserSubmode] = useState<"brush" | "orbit">("brush");
+  const [eraserRadius, setEraserRadius] = useState(40);
+  const [erasedCount, setErasedCount] = useState(0);
+  const [canUndo, setCanUndo] = useState(false);
+  const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
+
+  // Active Main Animation Setting (synced to video recording)
+  const [activeAnimation, setActiveAnimation] = useState<"break" | "wind" | "ripple" | "fill" | "idle">("break");
+
   useEffect(() => {
     let unmounted = false;
     void (async () => {
@@ -110,6 +123,18 @@ export function FaceParticlesApp() {
     const engine = new ParticleEngine(canvas);
     engineRef.current = engine;
     engine.onState = setAnim;
+    engine.setOnEraseChange((total) => {
+      setErasedCount(total);
+      setCanUndo(engine.canUndo());
+      const finalSet = engine.getParticleSet();
+      if (finalSet && cacheRef.current) {
+        cacheRef.current.set = finalSet;
+      }
+    });
+    engine.setOnEraseProgress((total) => {
+      setErasedCount(total);
+      setCanUndo(engine.canUndo());
+    });
     setGlOk(engine.supported);
     if (engine.supported) {
       engine.load(makeCloud(32000));
@@ -277,7 +302,20 @@ export function FaceParticlesApp() {
     });
   };
 
-  const play = (name: EffectName) => engineRef.current?.play(name);
+  const play = (name: EffectName) => {
+    if (name === "disassemble" || name === "assemble" || name === "build") {
+      setActiveAnimation("break");
+    } else if (name === "wind") {
+      setActiveAnimation("wind");
+    } else if (name === "ripple") {
+      setActiveAnimation("ripple");
+    } else if (name === "fill") {
+      setActiveAnimation("fill");
+    } else if (name === "idle") {
+      setActiveAnimation("idle");
+    }
+    engineRef.current?.play(name);
+  };
 
   const onTextSubmit = (text: string, theme: "gold" | "cyberpunk" | "monochrome" | "emerald") => {
     void runSource(() => generateFromText(text, paramsRef.current, { colorTheme: theme }, setBusy));
@@ -317,6 +355,66 @@ export function FaceParticlesApp() {
     }
   };
 
+  const toggleEraser = useCallback(() => {
+    setEraserActive((prev) => {
+      const next = !prev;
+      engineRef.current?.setEraserMode(next, eraserSubmode, eraserRadius);
+      if (!next) {
+        setCursorPos(null);
+        const finalSet = engineRef.current?.getParticleSet();
+        if (finalSet && cacheRef.current) {
+          cacheRef.current.set = finalSet;
+        }
+      } else {
+        setSheet(false);
+        setHero(false);
+      }
+      return next;
+    });
+  }, [eraserSubmode, eraserRadius]);
+
+  const handleSubmodeChange = useCallback((mode: "brush" | "orbit") => {
+    setEraserSubmode(mode);
+    engineRef.current?.setEraserSubmode(mode);
+  }, []);
+
+  const handleRadiusChange = useCallback((r: number) => {
+    setEraserRadius(r);
+    engineRef.current?.setEraserRadius(r);
+  }, []);
+
+  const handleUndo = useCallback(() => {
+    engineRef.current?.undoErase();
+    setCanUndo(engineRef.current?.canUndo() ?? false);
+    setErasedCount(engineRef.current?.getErasedCount() ?? 0);
+    const finalSet = engineRef.current?.getParticleSet();
+    if (finalSet && cacheRef.current) {
+      cacheRef.current.set = finalSet;
+    }
+  }, []);
+
+  const handleReset = useCallback(() => {
+    engineRef.current?.resetErase();
+    setCanUndo(false);
+    setErasedCount(0);
+    const finalSet = engineRef.current?.getParticleSet();
+    if (finalSet && cacheRef.current) {
+      cacheRef.current.set = finalSet;
+    }
+  }, []);
+
+  const handleDone = useCallback(() => {
+    setEraserActive(false);
+    engineRef.current?.setEraserMode(false);
+    setCursorPos(null);
+    const finalSet = engineRef.current?.getParticleSet();
+    if (finalSet && cacheRef.current) {
+      cacheRef.current.set = finalSet;
+    }
+    setNotification("3D sculpt updated! Unwanted particles removed across all views and exports.");
+    window.setTimeout(() => setNotification(null), 4000);
+  }, []);
+
   return (
     <main
       className={cn(
@@ -324,7 +422,18 @@ export function FaceParticlesApp() {
         params.invert ? "bg-white text-neutral-900" : "bg-bg text-fg",
       )}
     >
-      <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
+      <div
+        className={cn(
+          "absolute inset-0 flex items-center justify-center overflow-hidden",
+          eraserActive && eraserSubmode === "brush" ? "cursor-none" : "cursor-grab active:cursor-grabbing",
+        )}
+        onPointerMove={(e) => {
+          if (eraserActive && eraserSubmode === "brush") {
+            setCursorPos({ x: e.clientX, y: e.clientY });
+          }
+        }}
+        onPointerLeave={() => setCursorPos(null)}
+      >
         <canvas
           ref={canvasRef}
           className={cn(
@@ -336,6 +445,19 @@ export function FaceParticlesApp() {
           aria-label="Particle portrait stage"
         />
       </div>
+
+      {/* Floating Eraser Brush Indicator */}
+      {cursorPos && eraserActive && eraserSubmode === "brush" && (
+        <div
+          className="pointer-events-none fixed z-50 rounded-full border-2 border-rose-400 bg-rose-500/20 shadow-[0_0_16px_rgba(244,63,94,0.45)] -translate-x-1/2 -translate-y-1/2 transition-none"
+          style={{
+            left: cursorPos.x,
+            top: cursorPos.y,
+            width: eraserRadius * 2,
+            height: eraserRadius * 2,
+          }}
+        />
+      )}
 
       {!glOk && (
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-bg px-8 text-center">
@@ -485,6 +607,23 @@ export function FaceParticlesApp() {
           <Button
             variant="secondary"
             size="icon"
+            aria-label="Eraser Tool"
+            title="Erase unwanted particles (brush tool)"
+            disabled={!hasPortrait}
+            onClick={toggleEraser}
+            className={cn(
+              eraserActive
+                ? "bg-rose-500/25 text-rose-300 border-rose-500/50 shadow-md ring-1 ring-rose-500/40"
+                : params.invert
+                  ? "border-neutral-300 bg-white/85 text-neutral-900 shadow-sm hover:bg-white backdrop-blur-md"
+                  : "",
+            )}
+          >
+            <Eraser className="size-5" />
+          </Button>
+          <Button
+            variant="secondary"
+            size="icon"
             aria-label="Save still"
             title={params.invert ? "Export print-ready artwork (PNG)" : "Save still image (PNG)"}
             disabled={!hasPortrait}
@@ -578,7 +717,7 @@ export function FaceParticlesApp() {
         </section>
       )}
 
-      {!hero && hasPortrait && !recording && (
+      {!hero && hasPortrait && !recording && !eraserActive && (
         <>
           <div
             className={cn(
@@ -1095,6 +1234,20 @@ export function FaceParticlesApp() {
         </>
       )}
 
+      {/* Eraser Tool Floating Interactive Toolbar */}
+      <EraserToolbar
+        active={eraserActive}
+        submode={eraserSubmode}
+        onSubmodeChange={handleSubmodeChange}
+        radius={eraserRadius}
+        onRadiusChange={handleRadiusChange}
+        erasedCount={erasedCount}
+        canUndo={canUndo}
+        onUndo={handleUndo}
+        onReset={handleReset}
+        onDone={handleDone}
+      />
+
       {recording && (
         <div className="pointer-events-none absolute inset-x-0 bottom-8 z-20 flex justify-center">
           <div className="rounded-full border border-border bg-bg-elevated/90 px-4 py-2 text-xs uppercase tracking-[0.18em] text-fg-muted">
@@ -1130,6 +1283,7 @@ export function FaceParticlesApp() {
         onClose={() => setRecordDialogOpen(false)}
         onStart={handleStartRecord}
         invert={params.invert}
+        currentAnimation={activeAnimation}
       />
 
       <TextDialog

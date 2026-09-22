@@ -7,7 +7,9 @@ import {
   perspective,
   unprojectToZ0,
   clamp,
+  invert,
 } from "./math";
+import { filterParticleSet, eraseParticlesAlongSegment } from "./eraser";
 import { RENDER_FS, RENDER_VS, UPDATE_FS, UPDATE_VS } from "./shaders";
 
 type TouchSlot = { x: number; y: number; z: number; w: number; vx: number; vy: number; id: number };
@@ -123,6 +125,16 @@ export class ParticleEngine {
   private tmpEye: [number, number, number] = [0, 0, 2.3];
   private progCamera: { yaw: number; pitch: number; distance: number } | null = null;
 
+  eraserActive = false;
+  eraserSubmode: "brush" | "orbit" = "brush";
+  eraserRadius = 40;
+  private originalSet: ParticleSet | null = null;
+  private keepMask: Uint8Array | null = null;
+  private undoStack: Uint8Array[] = [];
+  private lastErasePos: { x: number; y: number } | null = null;
+  private onEraseStrokeProgress?: (erasedTotal: number) => void;
+  private onEraseStrokeEnd?: (erasedTotal: number) => void;
+
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     const gl = canvas.getContext("webgl2", {
@@ -198,7 +210,12 @@ export class ParticleEngine {
     if (this.renderProg) gl.deleteProgram(this.renderProg);
   }
 
-  load(set: ParticleSet, opts?: { scatter?: boolean }): void {
+  load(set: ParticleSet, opts?: { scatter?: boolean; isPruned?: boolean }): void {
+    if (!opts?.isPruned) {
+      this.originalSet = set;
+      this.keepMask = new Uint8Array(set.count).fill(1);
+      this.undoStack = [];
+    }
     this.set = set;
     this.maxCount = set.count;
     this.drawCount = set.count;
@@ -306,7 +323,8 @@ export class ParticleEngine {
   }
 
   setDrawCount(n: number): void {
-    this.drawCount = clamp(n | 0, 1000, this.maxCount || n);
+    const limit = this.set ? this.set.count : (this.maxCount || n);
+    this.drawCount = clamp(n | 0, 1000, limit);
   }
 
   setPointSize(px: number): void {
@@ -336,6 +354,88 @@ export class ParticleEngine {
     if (!gl || !this.homeBuf) return;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.homeBuf);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, set.home);
+  }
+
+  setEraserMode(active: boolean, submode: "brush" | "orbit" = "brush", radius = 40): void {
+    this.eraserActive = active;
+    this.eraserSubmode = submode;
+    this.eraserRadius = radius;
+    if (active) {
+      this.idleOrbit = false;
+      this.userOrbit = true;
+    } else {
+      this.lastErasePos = null;
+    }
+  }
+
+  setEraserRadius(r: number): void {
+    this.eraserRadius = Math.max(8, Math.min(250, r));
+  }
+
+  setEraserSubmode(mode: "brush" | "orbit"): void {
+    this.eraserSubmode = mode;
+    this.lastErasePos = null;
+  }
+
+  setOnEraseChange(cb: (erasedTotal: number) => void): void {
+    this.onEraseStrokeEnd = cb;
+  }
+
+  setOnEraseProgress(cb: (erasedTotal: number) => void): void {
+    this.onEraseStrokeProgress = cb;
+  }
+
+  pushUndoState(): void {
+    if (!this.keepMask) return;
+    if (this.undoStack.length >= 25) this.undoStack.shift();
+    this.undoStack.push(new Uint8Array(this.keepMask));
+  }
+
+  undoErase(): boolean {
+    if (this.undoStack.length === 0 || !this.originalSet || !this.keepMask) return false;
+    const prev = this.undoStack.pop()!;
+    this.keepMask.set(prev);
+    const pruned = filterParticleSet(this.originalSet, this.keepMask);
+    this.load(pruned, { scatter: false, isPruned: true });
+    this.onEraseStrokeEnd?.(this.getErasedCount());
+    return true;
+  }
+
+  resetErase(): void {
+    if (!this.originalSet || !this.keepMask) return;
+    this.undoStack = [];
+    this.keepMask.fill(1);
+    this.load(this.originalSet, { scatter: false });
+    this.onEraseStrokeEnd?.(0);
+  }
+
+  canUndo(): boolean {
+    return this.undoStack.length > 0;
+  }
+
+  getErasedCount(): number {
+    if (!this.originalSet || !this.set) return 0;
+    return Math.max(0, this.originalSet.count - this.set.count);
+  }
+
+  performErase(x0: number, y0: number, x1: number, y1: number): void {
+    if (!this.originalSet || !this.keepMask || !this.gl) return;
+    const newlyErased = eraseParticlesAlongSegment(
+      this.originalSet,
+      this.keepMask,
+      this.viewProj,
+      this.canvas.clientWidth,
+      this.canvas.clientHeight,
+      { x: x0, y: y0 },
+      { x: x1, y: y1 },
+      this.eraserRadius,
+    );
+
+    if (newlyErased.length > 0) {
+      const pruned = filterParticleSet(this.originalSet, this.keepMask);
+      this.load(pruned, { scatter: false, isPruned: true });
+      this.onEraseStrokeProgress?.(this.getErasedCount());
+    }
   }
 
   play(name: EffectName): void {
@@ -629,12 +729,15 @@ export class ParticleEngine {
     let yaw = clamp(this.yaw + activeGyroYaw + swayY + idleY, -ORBIT_LIMIT, ORBIT_LIMIT);
     let pitch = clamp(this.pitch + activeGyroPitch + swayP + idleP, -ORBIT_LIMIT, ORBIT_LIMIT);
     const baseDist = 2.45;
-    let dist = aspect < 1.0 ? baseDist * 0.98 : baseDist;
+    // Scale camera distance on narrow / portrait mobile screens so particles are centered and never overflow horizontally
+    const refAspect = 0.75;
+    const aspectScale = aspect < refAspect ? refAspect / Math.max(0.35, aspect) : 1.0;
+    let dist = baseDist * aspectScale;
 
     if (this.progCamera) {
       yaw = this.progCamera.yaw;
       pitch = this.progCamera.pitch;
-      dist = this.progCamera.distance;
+      dist = this.progCamera.distance * aspectScale;
     }
 
     this.tmpEye[0] = Math.sin(yaw) * Math.cos(pitch) * dist;
@@ -642,6 +745,7 @@ export class ParticleEngine {
     this.tmpEye[2] = Math.cos(yaw) * Math.cos(pitch) * dist;
     lookAt(this.view, this.tmpEye, [0, 0, 0], [0, 1, 0]);
     multiply(this.viewProj, this.proj, this.view);
+    invert(this.invViewProj, this.viewProj);
   }
 
   setProgrammaticCamera(pose: { yaw?: number; pitch?: number; distance?: number } | null): void {
@@ -761,6 +865,23 @@ export class ParticleEngine {
   private onMenu = (e: Event) => e.preventDefault();
 
   private onDown = (e: PointerEvent) => {
+    if (this.eraserActive) {
+      if (this.eraserSubmode === "orbit") {
+        this.userOrbit = true;
+        this.idleOrbit = false;
+        this.pointers.set(-2, { x: e.clientX, y: e.clientY, t: performance.now() });
+        return;
+      }
+      // Brush mode: drag erases particles
+      this.pushUndoState();
+      const r = this.canvas.getBoundingClientRect();
+      const sx = e.clientX - r.left;
+      const sy = e.clientY - r.top;
+      this.lastErasePos = { x: sx, y: sy };
+      this.performErase(sx, sy, sx, sy);
+      return;
+    }
+
     if (e.button === 2 || e.altKey) {
       this.userOrbit = true;
       this.idleOrbit = false;
@@ -782,6 +903,28 @@ export class ParticleEngine {
   };
 
   private onMove = (e: PointerEvent) => {
+    if (this.eraserActive) {
+      if (this.eraserSubmode === "orbit") {
+        const orbit = this.pointers.get(-2);
+        if (orbit) {
+          this.yaw = clamp(this.yaw + (e.clientX - orbit.x) * 0.004, -ORBIT_LIMIT, ORBIT_LIMIT);
+          this.pitch = clamp(this.pitch + (e.clientY - orbit.y) * 0.003, -ORBIT_LIMIT, ORBIT_LIMIT);
+          orbit.x = e.clientX;
+          orbit.y = e.clientY;
+        }
+        return;
+      }
+      // Brush mode
+      if (this.lastErasePos && (e.buttons & 1 || e.pointerType === "touch")) {
+        const r = this.canvas.getBoundingClientRect();
+        const sx = e.clientX - r.left;
+        const sy = e.clientY - r.top;
+        this.performErase(this.lastErasePos.x, this.lastErasePos.y, sx, sy);
+        this.lastErasePos = { x: sx, y: sy };
+      }
+      return;
+    }
+
     const orbit = this.pointers.get(-2);
     if (orbit && (e.buttons & 2 || e.altKey)) {
       this.yaw = clamp(this.yaw + (e.clientX - orbit.x) * 0.004, -ORBIT_LIMIT, ORBIT_LIMIT);
@@ -811,6 +954,14 @@ export class ParticleEngine {
   };
 
   private onUp = (e: PointerEvent) => {
+    if (this.eraserActive) {
+      this.pointers.delete(-2);
+      if (this.lastErasePos) {
+        this.lastErasePos = null;
+        this.onEraseStrokeEnd?.(this.getErasedCount());
+      }
+      return;
+    }
     this.pointers.delete(e.pointerId);
     this.pointers.delete(-2);
     this.syncTouches();
