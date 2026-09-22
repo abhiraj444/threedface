@@ -27,7 +27,6 @@ import { loadParams, SAMPLES, writeHash } from "@/lib/face-particles/config";
 import { ParticleEngine } from "@/lib/face-particles/engine";
 import { EraserToolbar } from "./eraser-toolbar";
 import {
-  generateFromCanvas,
   generateFromFile,
   generateFromText,
   generateFromUrl,
@@ -36,7 +35,6 @@ import {
   switchDepthMode,
   type PipelineCache,
 } from "@/lib/face-particles/pipeline";
-import { paintStudy } from "@/lib/face-particles/procedural";
 import { applyDepthScale, makeCloud } from "@/lib/face-particles/sampler";
 import { downloadBlob, recordTimeline, type RecordOptions } from "@/lib/face-particles/record";
 import { isModelCached, downloadAndCacheModel, getModelCacheSize } from "@/lib/face-particles/neural/model-cache";
@@ -118,53 +116,39 @@ export function FaceParticlesApp() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const engine = new ParticleEngine(canvas);
-    engineRef.current = engine;
-    engine.onState = setAnim;
-    engine.setOnEraseChange((total) => {
-      setErasedCount(total);
-      setCanUndo(engine.canUndo());
-      const finalSet = engine.getParticleSet();
-      if (finalSet && cacheRef.current) {
-        cacheRef.current.set = finalSet;
+    let engine: ParticleEngine | null = null;
+    try {
+      engine = new ParticleEngine(canvas);
+      engineRef.current = engine;
+      engine.onState = setAnim;
+      engine.setOnEraseChange((total) => {
+        setErasedCount(total);
+        setCanUndo(engine?.canUndo() ?? false);
+        const finalSet = engine?.getParticleSet();
+        if (finalSet && cacheRef.current) {
+          cacheRef.current.set = finalSet;
+        }
+      });
+      engine.setOnEraseProgress((total) => {
+        setErasedCount(total);
+        setCanUndo(engine?.canUndo() ?? false);
+      });
+      setGlOk(engine.supported);
+      if (engine.supported) {
+        engine.load(makeCloud(24000));
+        engine.play("idle");
+        engine.assemble = 1;
+        engine.targetAssemble = 1;
+        engine.start();
       }
-    });
-    engine.setOnEraseProgress((total) => {
-      setErasedCount(total);
-      setCanUndo(engine.canUndo());
-    });
-    setGlOk(engine.supported);
-    if (engine.supported) {
-      engine.load(makeCloud(24000));
-      engine.play("idle");
-      engine.assemble = 1;
-      engine.targetAssemble = 1;
-      engine.start();
+    } catch (e) {
+      console.warn("[App] WebGL2 engine initialization failed:", e);
+      setGlOk(false);
     }
-    void (async () => {
-      try {
-        setBusy({ stage: "Composing study", fraction: 0.2 });
-        const study = paintStudy(0);
-        const cache = await generateFromCanvas(study, paramsRef.current, (p) => setBusy(p));
-        cacheRef.current = cache;
-        engine.load(cache.set);
-        engine.setDrawCount(paramsRef.current.particles);
-        engine.setPointSize(paramsRef.current.size);
-        engine.setColorMode(paramsRef.current.colorStyle ?? (paramsRef.current.color ? "color" : "mono"));
-        engine.setColorMix(paramsRef.current.colorMix ?? 0.5);
-        engine.setInvert(paramsRef.current.invert);
-        engine.setMotionSensor(paramsRef.current.motionSensor ?? false);
-        engine.setSlowSway(paramsRef.current.slowSway ?? true);
-        engine.play("build");
-        setHasPortrait(true);
-        setVisionReady(true);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Could not start the study.");
-      } finally {
-        setBusy(null);
-      }
-    })();
-    return () => engine.dispose();
+
+    return () => {
+      engine?.dispose();
+    };
   }, []);
 
   useEffect(() => {
@@ -195,6 +179,7 @@ export function FaceParticlesApp() {
       engine.setInvert(paramsRef.current.invert);
       engine.play("build");
       setHasPortrait(true);
+      setVisionReady(true);
       setDepthMode("standard");
       if (modelCached && cache.subjectType === "face") {
         window.setTimeout(() => setShowNeuralPrompt(true), 1200);

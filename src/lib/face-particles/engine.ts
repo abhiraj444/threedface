@@ -138,31 +138,51 @@ export class ParticleEngine {
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
-    const gl = canvas.getContext("webgl2", {
-      alpha: false,
-      antialias: false,
-      preserveDrawingBuffer: true,
-      powerPreference: "high-performance",
-    });
-    this.gl = gl;
-    this.supported = Boolean(gl);
-    if (!gl) return;
-    const range = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE) as Float32Array | number[];
-    this.pointRange = [range[0] ?? 1, range[1] ?? 64];
-    this.updateProg = link(gl, UPDATE_VS, UPDATE_FS, ["vPos", "vVel"]);
-    this.renderProg = link(gl, RENDER_VS, RENDER_FS);
-    this.uUpdate = this.uniforms(this.updateProg, [
-      "uDt", "uTime", "uSpring", "uDamp", "uAssemble", "uTurb",
-      "uMode", "uEffectT", "uEffectAmp", "uEffectOrigin",
-    ]);
-    for (let i = 0; i < 5; i++) {
-      this.uUpdate[`uTouch[${i}]`] = gl.getUniformLocation(this.updateProg, `uTouch[${i}]`);
-      this.uUpdate[`uTouchVel[${i}]`] = gl.getUniformLocation(this.updateProg, `uTouchVel[${i}]`);
+    let gl: WebGL2RenderingContext | null = null;
+    try {
+      gl = canvas.getContext("webgl2", {
+        alpha: false,
+        antialias: false,
+        preserveDrawingBuffer: true,
+      }) as WebGL2RenderingContext | null;
+    } catch {
+      gl = null;
     }
-    this.uRender = this.uniforms(this.renderProg, [
-      "uViewProj", "uSize", "uDpr", "uPointRange", "uTime", "uBreath", "uColorMode", "uColorMix", "uInvert",
-    ]);
-    this.bindInput();
+    if (!gl) {
+      try {
+        gl = canvas.getContext("webgl2") as WebGL2RenderingContext | null;
+      } catch {
+        gl = null;
+      }
+    }
+    this.gl = gl;
+    if (!gl) {
+      this.supported = false;
+      return;
+    }
+
+    try {
+      const range = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE) as Float32Array | number[];
+      this.pointRange = [range?.[0] ?? 1, range?.[1] ?? 64];
+      this.updateProg = link(gl, UPDATE_VS, UPDATE_FS, ["vPos", "vVel"]);
+      this.renderProg = link(gl, RENDER_VS, RENDER_FS);
+      this.uUpdate = this.uniforms(this.updateProg, [
+        "uDt", "uTime", "uSpring", "uDamp", "uAssemble", "uTurb",
+        "uMode", "uEffectT", "uEffectAmp", "uEffectOrigin",
+      ]);
+      for (let i = 0; i < 5; i++) {
+        this.uUpdate[`uTouch[${i}]`] = gl.getUniformLocation(this.updateProg, `uTouch[${i}]`);
+        this.uUpdate[`uTouchVel[${i}]`] = gl.getUniformLocation(this.updateProg, `uTouchVel[${i}]`);
+      }
+      this.uRender = this.uniforms(this.renderProg, [
+        "uViewProj", "uSize", "uDpr", "uPointRange", "uTime", "uBreath", "uColorMode", "uColorMix", "uInvert",
+      ]);
+      this.bindInput();
+      this.supported = true;
+    } catch (err) {
+      console.warn("[ParticleEngine] WebGL2 program initialization failed:", err);
+      this.supported = false;
+    }
   }
 
   private uniforms(prog: WebGLProgram, names: string[]): Record<string, WebGLUniformLocation | null> {
