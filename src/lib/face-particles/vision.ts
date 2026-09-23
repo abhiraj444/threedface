@@ -63,25 +63,31 @@ function isMobile(): boolean {
   );
 }
 
+let cachedCpuLandmarker: FaceLandmarker | null = null;
+let cachedCpuSegmenter: ImageSegmenter | null = null;
+
 export async function createCpuLandmarker(): Promise<FaceLandmarker | null> {
+  if (cachedCpuLandmarker) return cachedCpuLandmarker;
   try {
     const wasm = (await getWasmFileset()) as Parameters<typeof FaceLandmarker.createFromOptions>[0];
     try {
-      return await FaceLandmarker.createFromOptions(wasm, {
+      cachedCpuLandmarker = await FaceLandmarker.createFromOptions(wasm, {
         baseOptions: { modelAssetPath: LOCAL_LANDMARKER_MODEL, delegate: "CPU" },
         runningMode: "IMAGE",
         numFaces: 4,
         minFaceDetectionConfidence: 0.35,
         minFacePresenceConfidence: 0.35,
       });
+      return cachedCpuLandmarker;
     } catch {
-      return await FaceLandmarker.createFromOptions(wasm, {
+      cachedCpuLandmarker = await FaceLandmarker.createFromOptions(wasm, {
         baseOptions: { modelAssetPath: CDN_LANDMARKER_MODEL, delegate: "CPU" },
         runningMode: "IMAGE",
         numFaces: 4,
         minFaceDetectionConfidence: 0.35,
         minFacePresenceConfidence: 0.35,
       });
+      return cachedCpuLandmarker;
     }
   } catch (err) {
     console.warn("[Vision] createCpuLandmarker failed:", err);
@@ -90,22 +96,25 @@ export async function createCpuLandmarker(): Promise<FaceLandmarker | null> {
 }
 
 export async function createCpuSegmenter(): Promise<ImageSegmenter | null> {
+  if (cachedCpuSegmenter) return cachedCpuSegmenter;
   try {
     const wasm = (await getWasmFileset()) as Parameters<typeof ImageSegmenter.createFromOptions>[0];
     try {
-      return await ImageSegmenter.createFromOptions(wasm, {
+      cachedCpuSegmenter = await ImageSegmenter.createFromOptions(wasm, {
         baseOptions: { modelAssetPath: LOCAL_SEGMENTER_MODEL, delegate: "CPU" },
         runningMode: "IMAGE",
         outputCategoryMask: true,
         outputConfidenceMasks: false,
       });
+      return cachedCpuSegmenter;
     } catch {
-      return await ImageSegmenter.createFromOptions(wasm, {
+      cachedCpuSegmenter = await ImageSegmenter.createFromOptions(wasm, {
         baseOptions: { modelAssetPath: CDN_SEGMENTER_MODEL, delegate: "CPU" },
         runningMode: "IMAGE",
         outputCategoryMask: true,
         outputConfidenceMasks: false,
       });
+      return cachedCpuSegmenter;
     }
   } catch (err) {
     console.warn("[Vision] createCpuSegmenter failed:", err);
@@ -185,8 +194,8 @@ export async function analyze(source: HTMLCanvasElement): Promise<VisionResult> 
   const inferSource: CanvasImageSource = source;
 
   const [landmarker, segmenter] = await Promise.all([
-    withTimeout(initLandmarker(), 30000, "Landmarker init").catch(() => null),
-    withTimeout(initSegmenter(), 30000, "Segmenter init").catch(() => null),
+    withTimeout(initLandmarker(), 8000, "Landmarker init").catch(() => null),
+    withTimeout(initSegmenter(), 8000, "Segmenter init").catch(() => null),
   ]);
 
   let landmarks: Landmark[] | null = null;

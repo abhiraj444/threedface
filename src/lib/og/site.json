@@ -1,6 +1,5 @@
 {
-  "title": "Face Particles",
   "type": "x:game",
   "card": "custom",
-  "description": "Turn a portrait into a living cloud of particles. On-device, private, interactive."
+  "description": "Turn a portrait into an interactive living 3D cloud of particles using on-device vision and WebGL."
 }

@@ -171,42 +171,74 @@ void main() {
   vec3 p = aPos;
   p.z += sin(uTime * 1.35 + aSeed * 6.28318) * uBreath;
   gl_Position = uViewProj * vec4(p, 1.0);
-  float depthScale = 0.72 + 0.28 * (1.0 - clamp(p.z * 0.85 + 0.35, 0.0, 1.0));
+  
+  // Depth cueing & perspective point sizing
+  float depthScale = 0.75 + 0.25 * (1.0 - clamp(p.z * 0.75 + 0.25, 0.0, 1.0));
   float size = uSize * uDpr * depthScale;
   gl_PointSize = clamp(size, uPointRange.x, uPointRange.y);
+  
   float tone = aTone;
-  // In invert mode, ensure dark features have solid ink opacity (no hazy fading)
-  vBright = uInvert > 0.5
-    ? (0.76 + 0.24 * tone) * (0.86 + 0.14 * depthScale)
-    : (0.58 + 0.42 * tone) * (0.82 + 0.18 * depthScale);
 
-  // 0.0 = Monochrome (all B&W/silver), 1.0 = Full Color (source image), 2.0 = Hybrid (mixed color + B&W)
+  // 3D Directional Lighting & Sculptural Chiaroscuro:
+  // Approximate local surface normal from 3D coordinates
+  vec3 norm = normalize(vec3(-p.x * 1.25, -p.y * 1.0, max(0.18, 0.92 - (p.x * p.x * 1.1 + p.y * p.y * 0.85))));
+  vec3 keyLight = normalize(vec3(-0.4, 0.55, 0.75));
+  vec3 fillLight = normalize(vec3(0.45, -0.3, 0.55));
+  float nDotL = max(0.0, dot(norm, keyLight));
+  float fillDot = max(0.0, dot(norm, fillLight));
+  float diffuse = 0.42 + 0.45 * nDotL + 0.15 * fillDot;
+
+  // Spatial depth cue: high forward features (+Z) receive radiant illumination, receding edges taper softly
+  float zCue = clamp(p.z * 1.35 + 0.65, 0.45, 1.25);
+  
+  // Specular sheen on elevated contours (nose tip, brow, cheekbones, snout)
+  vec3 halfVec = normalize(keyLight + vec3(0.0, 0.0, 1.0));
+  float spec = pow(max(0.0, dot(norm, halfVec)), 10.0) * 0.32;
+
+  // Overall luminous brightness modulation
+  vBright = uInvert > 0.5
+    ? clamp((0.72 + 0.28 * tone) * (0.85 + 0.15 * zCue), 0.0, 1.0)
+    : clamp((0.55 + 0.45 * tone) * (0.80 + 0.20 * zCue) * diffuse + spec * 0.4, 0.0, 1.35);
+
+  // 0.0 = Monochrome (Sculpted Titanium / Silver 3D bust), 1.0 = Full Color, 2.0 = Hybrid
   vec3 col;
-  vec3 vividColor = aColor;
+  
+  // Luxury 3D Sculptural Monochrome palette:
+  vec3 highlightSilver = vec3(0.96, 0.98, 1.0);
+  vec3 midtoneSilver = vec3(0.70, 0.73, 0.78);
+  vec3 shadowSilver = vec3(0.28, 0.31, 0.36);
+  
+  float lightVal = clamp(diffuse * zCue * (0.5 + 0.5 * tone) + spec, 0.0, 1.4);
+  vec3 sculptedMono = mix(shadowSilver, midtoneSilver, clamp(lightVal, 0.0, 1.0));
+  sculptedMono = mix(sculptedMono, highlightSilver, clamp(lightVal - 1.0, 0.0, 1.0) * 0.85 + spec);
+
+  // Shaded Color mode: applies 3D volumetric light to the source RGB
+  vec3 shadedColor = aColor * (0.42 + 0.58 * diffuse * zCue) + vec3(spec * 0.25);
 
   if (uColorMode < 0.5) {
-    col = vec3(1.0);
+    col = sculptedMono;
   } else if (uColorMode < 1.5) {
-    col = vividColor;
+    col = shadedColor;
   } else {
     float isCol = step(aSeed, clamp(uColorMix, 0.05, 0.95));
-    col = mix(vec3(1.0), vividColor, isCol);
+    col = mix(sculptedMono, shadedColor, isCol);
   }
 
   if (uInvert > 0.5) {
-    // For inverted mode on fine-art paper:
-    // - Monochrome: Rich sumi/carbon black ink
-    // - Full Color: High-saturation print pigment derived from source
-    // - Hybrid: Interwoven carbon ink + source color pigment
-    vec3 inkBlack = vec3(0.04, 0.04, 0.05);
+    // For inverted fine-art mode:
+    // Carbon/sumi ink with subtle charcoal gradation
+    vec3 inkCarbon = vec3(0.03, 0.03, 0.04);
+    vec3 inkWash = vec3(0.28, 0.29, 0.32);
+    vec3 invertMono = mix(inkCarbon, inkWash, clamp((1.0 - zCue) * 0.6 + (1.0 - tone) * 0.4, 0.0, 1.0));
     vec3 richColor = clamp(pow(aColor, vec3(1.1)) * 0.95, 0.0, 1.0);
+    
     if (uColorMode < 0.5) {
-      col = inkBlack;
+      col = invertMono;
     } else if (uColorMode < 1.5) {
       col = richColor;
     } else {
       float isCol = step(aSeed, clamp(uColorMix, 0.05, 0.95));
-      col = mix(inkBlack, richColor, isCol);
+      col = mix(invertMono, richColor, isCol);
     }
   }
   vColor = col;
@@ -222,7 +254,12 @@ void main() {
   vec2 p = gl_PointCoord * 2.0 - 1.0;
   float r2 = dot(p, p);
   if (r2 > 1.0) discard;
-  float a = exp(-r2 * 2.6) * vBright;
+  float dist = sqrt(r2);
+  // Crisp stardust core with soft luminous halo:
+  // Prevents milky/foggy clumping and gives individual 3D depth perception
+  float core = 1.0 - smoothstep(0.0, 0.92, dist);
+  float halo = exp(-r2 * 3.2);
+  float a = (core * 0.58 + halo * 0.42) * vBright;
   fragColor = vec4(vColor * a, a);
 }
 `;

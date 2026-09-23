@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import {
   Aperture,
   Camera,
-  ChevronUp,
   Contrast,
   Download,
   Eraser,
@@ -11,6 +10,7 @@ import {
   Loader2,
   Printer,
   ScanFace,
+  Sliders,
   Smartphone,
   Sparkles,
   Type,
@@ -18,6 +18,7 @@ import {
   Video,
   Waves,
   Wind,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -38,6 +39,7 @@ import {
 import { applyDepthScale, makeCloud } from "@/lib/face-particles/sampler";
 import { downloadBlob, recordTimeline, type RecordOptions } from "@/lib/face-particles/record";
 import { isModelCached, downloadAndCacheModel, getModelCacheSize } from "@/lib/face-particles/neural/model-cache";
+import { preloadVision } from "@/lib/face-particles/vision";
 import { RecordDialog } from "@/components/face-particles/record-dialog";
 import { PrintDialog } from "@/components/face-particles/print-dialog";
 import { TextDialog } from "@/components/face-particles/text-dialog";
@@ -57,6 +59,8 @@ export function FaceParticlesApp() {
   const [params, setParams] = useState<Params>(() => paramsRef.current);
   const [hero, setHero] = useState(true);
   const [sheet, setSheet] = useState(false);
+  const [isScrubbing, setIsScrubbing] = useState(false);
+  const [activeTab, setActiveTab] = useState<"style" | "depth" | "sensors">("style");
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
   const [glOk, setGlOk] = useState(true);
@@ -141,6 +145,8 @@ export function FaceParticlesApp() {
         engine.targetAssemble = 1;
         engine.start();
       }
+      // Preload MediaPipe FaceLandmarker and Segmenter in background so uploads are instant
+      void preloadVision();
     } catch (e) {
       console.warn("[App] WebGL2 engine initialization failed:", e);
       setGlOk(false);
@@ -162,6 +168,17 @@ export function FaceParticlesApp() {
     engine.setColorMix(params.colorMix ?? 0.5);
     engine.setInvert(params.invert);
   }, [params]);
+
+  useEffect(() => {
+    if (!isScrubbing) return;
+    const onUp = () => setIsScrubbing(false);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [isScrubbing]);
 
   const runSource = useCallback(async (job: () => Promise<PipelineCache>, hideHero = true) => {
     setError(null);
@@ -254,17 +271,17 @@ export function FaceParticlesApp() {
         engine.updateHomeZ(cache.set);
       }
       if (partial.motionSensor != null) {
-        engine.setMotionSensor(next.motionSensor);
+        engine.setMotionSensor(Boolean(next.motionSensor));
       }
       if (partial.slowSway != null) {
-        engine.setSlowSway(next.slowSway);
+        engine.setSlowSway(Boolean(next.slowSway));
       }
 
       const fieldKeys: (keyof Params)[] = [
         "contrast", "detail", "feature", "floor", "softness", "invert", "removeBg",
       ];
       const needsField = fieldKeys.some((k) => k in partial);
-      const needsCrop = "straighten" in partial;
+      const needsCrop = "straighten" in partial || "subjectOverride" in partial;
 
       if (needsCrop || needsField) {
         window.clearTimeout(rebuildTimer.current);
@@ -809,409 +826,594 @@ export function FaceParticlesApp() {
                 <Waves className="size-3.5 text-accent" />
                 <span>{(params.slowSway ?? true) ? "Swaying" : "Static"}</span>
               </button>
+
+              <div
+                className={cn(
+                  "my-1.5 w-px self-stretch",
+                  params.invert ? "bg-neutral-200" : "bg-border/60",
+                )}
+              />
+
+              <button
+                type="button"
+                onClick={() => setSheet((s) => !s)}
+                title={sheet ? "Close Parameters Panel" : "Open Parameters Panel"}
+                className={cn(
+                  "flex h-10 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-colors",
+                  sheet
+                    ? params.invert
+                      ? "bg-neutral-900 text-white font-semibold"
+                      : "bg-fg text-bg font-semibold"
+                    : params.invert
+                      ? "text-neutral-700 hover:bg-neutral-100 hover:text-neutral-950"
+                      : "text-fg-muted hover:bg-bg-subtle hover:text-fg",
+                )}
+              >
+                <Sliders className="size-3.5 text-accent" />
+                <span>Controls</span>
+              </button>
             </div>
           </div>
 
+          {/* Responsive Controls & Parameters Inspector Panel */}
           <div
             className={cn(
-              "pointer-events-auto absolute inset-x-0 bottom-0 z-20 flex justify-center transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
-              sheet ? "translate-y-0" : "translate-y-[calc(100%-3rem)]",
+              "pointer-events-auto z-30 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+              // Mobile: compact bottom drawer with live peek translucency
+              "fixed inset-x-0 bottom-0 flex justify-center",
+              // Desktop: docked cleanly to the right side, leaving 100% of the 3D canvas unobstructed!
+              "md:fixed md:inset-x-auto md:right-5 md:top-20 md:bottom-6 md:w-88 md:max-w-sm md:flex-col md:justify-start",
+              sheet
+                ? "translate-y-0 md:translate-x-0 md:opacity-100 md:pointer-events-auto"
+                : "translate-y-[calc(100%-3rem)] md:translate-x-[calc(100%+3rem)] md:translate-y-0 md:opacity-0 md:pointer-events-none",
             )}
           >
             <div
+              onPointerDown={(e) => {
+                if ((e.target as HTMLElement)?.closest?.('[role="slider"], [data-radix-slider-thumb]')) {
+                  setIsScrubbing(true);
+                }
+              }}
+              onPointerUp={() => setIsScrubbing(false)}
+              onPointerCancel={() => setIsScrubbing(false)}
               className={cn(
-                "flex w-full max-w-lg flex-col max-h-[min(70dvh,500px)] rounded-t-[28px] border shadow-2xl backdrop-blur-xl transition-colors",
+                "flex w-full max-w-lg md:max-w-none flex-col max-h-[min(52dvh,430px)] md:max-h-[calc(100vh-6.5rem)] rounded-t-[28px] md:rounded-2xl border shadow-2xl backdrop-blur-xl transition-all duration-200",
+                isScrubbing ? "opacity-30 md:opacity-90" : "opacity-100",
                 params.invert
-                  ? "border-neutral-300/80 bg-white/95 text-neutral-900 shadow-neutral-900/10"
-                  : "border-border bg-bg-elevated/95 text-fg",
+                  ? "border-neutral-300/80 bg-white/92 text-neutral-900 shadow-neutral-900/10"
+                  : "border-border bg-bg-elevated/92 text-fg",
               )}
             >
-              <button
-                type="button"
+              {/* Header with drag handle on mobile, title and close button on desktop */}
+              <div
                 className={cn(
-                  "shrink-0 flex w-full flex-col items-center pb-2 pt-2.5 transition-colors border-b",
+                  "shrink-0 flex w-full flex-col items-center pb-2 pt-2.5 transition-colors border-b px-4",
                   params.invert
-                    ? "text-neutral-700 hover:text-neutral-950 border-neutral-200"
-                    : "text-fg-muted hover:text-fg border-border/40",
+                    ? "text-neutral-700 border-neutral-200"
+                    : "text-fg-muted border-border/40",
                 )}
-                onClick={() => setSheet((s) => !s)}
-                aria-expanded={sheet}
               >
-                <span
-                  className={cn(
-                    "mb-1.5 h-1.5 w-12 rounded-full",
-                    params.invert ? "bg-neutral-300" : "bg-border-strong",
-                  )}
-                />
-                <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.16em]">
-                  Structure
-                  <ChevronUp className={cn("size-3.5 transition-transform duration-200", sheet ? "rotate-0" : "rotate-180")} />
-                </span>
-              </button>
-
-              <div className="flex-1 overflow-y-auto overscroll-contain px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3 touch-pan-y">
-                <div className="flex flex-col gap-2.5 pb-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span
-                      className={cn(
-                        "text-xs font-medium uppercase tracking-[0.14em]",
-                        params.invert ? "text-neutral-500" : "text-fg-subtle",
-                      )}
-                    >
-                      Particle Palette
-                    </span>
-                    <div className="w-32">
-                      <ToggleRow
-                        label="Invert"
-                        icon={<FlipHorizontal2 className="size-3.5" />}
-                        checked={params.invert}
-                        onCheckedChange={(v) => patch({ invert: v })}
-                        invert={params.invert}
-                      />
-                    </div>
-                  </div>
-
-                  <div
+                {/* Mobile Drag handle */}
+                <button
+                  type="button"
+                  onClick={() => setSheet((s) => !s)}
+                  className="md:hidden flex flex-col items-center w-full focus:outline-none"
+                  aria-expanded={sheet}
+                >
+                  <span
                     className={cn(
-                      "grid grid-cols-3 gap-1 rounded-xl border p-1",
-                      params.invert
-                        ? "border-neutral-200 bg-neutral-100"
-                        : "border-border bg-bg-subtle",
+                      "mb-1.5 h-1.5 w-12 rounded-full",
+                      params.invert ? "bg-neutral-300" : "bg-border-strong",
                     )}
-                  >
-                    {(
-                      [
-                        ["mono", "Mono", "B&W"],
-                        ["hybrid", "Hybrid", "Color + B&W"],
-                        ["color", "Color", "Full RGB"],
-                      ] as const
-                    ).map(([mode, label, sub]) => {
-                      const currentMode = params.colorStyle ?? (params.color ? "color" : "mono");
-                      const active = currentMode === mode;
-                      return (
-                        <button
-                          key={mode}
-                          type="button"
-                          onClick={() =>
-                            patch({
-                              colorStyle: mode,
-                              color: mode !== "mono",
-                            })
-                          }
-                          className={cn(
-                            "flex flex-col items-center justify-center rounded-lg py-1.5 px-1 text-center transition-all",
-                            active
-                              ? params.invert
-                                ? "bg-white text-neutral-950 shadow-sm font-semibold border border-neutral-300"
-                                : "bg-bg-elevated text-fg shadow-sm font-semibold border border-border/80"
-                              : params.invert
-                                ? "text-neutral-600 hover:bg-white/60 hover:text-neutral-900"
-                                : "text-fg-muted hover:bg-bg/50 hover:text-fg",
-                          )}
-                        >
-                          <span className="text-xs">{label}</span>
-                          <span
-                            className={cn(
-                              "text-[10px] tracking-tight",
-                              params.invert ? "text-neutral-500" : "text-fg-subtle",
-                            )}
-                          >
-                            {sub}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                  />
+                </button>
 
-                  {(params.colorStyle ?? (params.color ? "color" : "mono")) === "hybrid" && (
-                    <div
+                {/* Header row */}
+                <div className="flex w-full items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sliders className="size-3.5 text-accent" />
+                    <span className="text-xs font-semibold uppercase tracking-[0.14em]">
+                      Structure & Parameters
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {isScrubbing && (
+                      <span className="text-[10px] text-accent animate-pulse font-medium">
+                        Live Preview
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setSheet(false)}
                       className={cn(
-                        "mt-1 rounded-xl border p-2.5",
-                        params.invert
-                          ? "border-neutral-200 bg-neutral-50"
-                          : "border-border/60 bg-bg/60",
+                        "rounded-md p-1 transition-colors hover:text-fg",
+                        params.invert ? "hover:bg-neutral-100 text-neutral-600" : "hover:bg-bg-subtle text-fg-subtle",
                       )}
+                      title="Close controls"
                     >
-                      <Field
-                        label="Hybrid Color Ratio (Derived from Face)"
-                        value={`${Math.round((params.colorMix ?? 0.5) * 100)}% Color · ${Math.round((1 - (params.colorMix ?? 0.5)) * 100)}% B&W`}
-                        invert={params.invert}
-                      >
-                        <Slider
-                          min={0.1}
-                          max={0.9}
-                          step={0.05}
-                          value={[params.colorMix ?? 0.5]}
-                          onValueChange={([v]) => patch({ colorMix: v ?? 0.5 })}
-                          invert={params.invert}
-                        />
-                      </Field>
-                      <p
+                      <X className="size-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Category Navigation Tabs */}
+                <div
+                  className={cn(
+                    "grid grid-cols-3 gap-1 rounded-lg border p-0.5 mt-2.5 w-full",
+                    params.invert ? "border-neutral-200 bg-neutral-100" : "border-border/60 bg-bg/50",
+                  )}
+                >
+                  {(
+                    [
+                      ["style", "Style & Tone"],
+                      ["depth", "Depth & Form"],
+                      ["sensors", "Sensors"],
+                    ] as const
+                  ).map(([id, label]) => {
+                    const active = activeTab === id;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setActiveTab(id)}
                         className={cn(
-                          "mt-1 text-[11px]",
+                          "rounded-md py-1 text-[11px] font-medium transition-all text-center",
+                          active
+                            ? params.invert
+                              ? "bg-white text-neutral-950 font-semibold shadow-xs"
+                              : "bg-bg-elevated text-fg font-semibold shadow-xs"
+                            : params.invert
+                              ? "text-neutral-500 hover:text-neutral-800"
+                              : "text-fg-subtle hover:text-fg",
+                        )}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Tabbed Content Area */}
+              <div className="flex-1 overflow-y-auto overscroll-contain px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3 touch-pan-y">
+                {activeTab === "style" && (
+                  <div className="flex flex-col gap-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span
+                        className={cn(
+                          "text-xs font-medium uppercase tracking-[0.14em]",
                           params.invert ? "text-neutral-500" : "text-fg-subtle",
                         )}
                       >
-                        Interweaves photorealistic colors from the face with silver monochrome particles.
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                <Field label="Particles" value={`${Math.round(params.particles / 1000)}k`} invert={params.invert}>
-                  <Slider
-                    min={5000}
-                    max={100000}
-                    step={1000}
-                    value={[params.particles]}
-                    onValueChange={([v]) => patch({ particles: v ?? params.particles })}
-                    invert={params.invert}
-                  />
-                </Field>
-                <Field label="Size" value={params.size.toFixed(1)} invert={params.invert}>
-                  <Slider
-                    min={0.8}
-                    max={4}
-                    step={0.1}
-                    value={[params.size]}
-                    onValueChange={([v]) => patch({ size: v ?? params.size })}
-                    invert={params.invert}
-                  />
-                </Field>
-                <Field label="Contrast" value={params.contrast.toFixed(2)} invert={params.invert}>
-                  <Slider
-                    min={0.6}
-                    max={2}
-                    step={0.05}
-                    value={[params.contrast]}
-                    onValueChange={([v]) => patch({ contrast: v ?? params.contrast })}
-                    invert={params.invert}
-                  />
-                </Field>
-                <Field label="Detail" value={params.detail.toFixed(2)} invert={params.invert}>
-                  <Slider
-                    min={0}
-                    max={2}
-                    step={0.05}
-                    value={[params.detail]}
-                    onValueChange={([v]) => patch({ detail: v ?? params.detail })}
-                    invert={params.invert}
-                  />
-                </Field>
-                <Field label="Features" value={params.feature.toFixed(2)} invert={params.invert}>
-                  <Slider
-                    min={0}
-                    max={1.5}
-                    step={0.05}
-                    value={[params.feature]}
-                    onValueChange={([v]) => patch({ feature: v ?? params.feature })}
-                    invert={params.invert}
-                  />
-                </Field>
-                <Field label="Shadow lift" value={params.floor.toFixed(2)} invert={params.invert}>
-                  <Slider
-                    min={0}
-                    max={0.3}
-                    step={0.01}
-                    value={[params.floor]}
-                    onValueChange={([v]) => patch({ floor: v ?? params.floor })}
-                    invert={params.invert}
-                  />
-                </Field>
-                <Field label="Silhouette" value={params.softness.toFixed(2)} invert={params.invert}>
-                  <Slider
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={[params.softness]}
-                    onValueChange={([v]) => patch({ softness: v ?? params.softness })}
-                    invert={params.invert}
-                  />
-                </Field>
-                <Field label="Depth" value={params.depth.toFixed(2)} invert={params.invert}>
-                  <Slider
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={[params.depth]}
-                    onValueChange={([v]) => patch({ depth: v ?? params.depth })}
-                    invert={params.invert}
-                  />
-                </Field>
-
-                {/* 3D Relief Engine Architecture */}
-                <div
-                  className={cn(
-                    "mt-2.5 rounded-xl border p-2.5 transition-all",
-                    params.invert
-                      ? "border-neutral-200 bg-neutral-50/80"
-                      : "border-border/70 bg-bg-elevated/50",
-                  )}
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span
-                      className={cn(
-                        "text-[11px] font-semibold uppercase tracking-[0.14em]",
-                        params.invert ? "text-neutral-700" : "text-fg-muted",
-                      )}
-                    >
-                      3D Relief Engine
-                    </span>
-                    <span
-                      className={cn(
-                        "text-[10px]",
-                        modelCached
-                          ? "text-emerald-500 font-medium"
-                          : downloadingModel
-                            ? "text-accent font-medium animate-pulse"
-                            : "text-fg-subtle",
-                      )}
-                    >
-                      {modelCached
-                        ? `✓ Cached locally (${getModelCacheSize()})`
-                        : downloadingModel
-                          ? `Downloading AI (${downloadProgress ?? 0}%)`
-                          : "Fast dome"}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => handleDepthModeChange("standard")}
-                      className={cn(
-                        "rounded-lg py-1.5 px-2 text-xs font-medium border transition-all text-center flex items-center justify-center gap-1.5",
-                        depthMode === "standard"
-                          ? params.invert
-                            ? "border-neutral-400 bg-white text-neutral-950 font-semibold shadow-xs"
-                            : "border-accent bg-accent/20 text-fg font-semibold shadow-xs"
-                          : params.invert
-                            ? "border-neutral-200 text-neutral-600 hover:bg-neutral-100"
-                            : "border-border/60 text-fg-muted hover:border-border",
-                      )}
-                    >
-                      <span>Standard Dome</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDepthModeChange("neural")}
-                      className={cn(
-                        "rounded-lg py-1.5 px-2 text-xs font-medium border transition-all text-center flex items-center justify-center gap-1.5",
-                        depthMode === "neural"
-                          ? params.invert
-                            ? "border-neutral-400 bg-white text-neutral-950 font-semibold shadow-xs"
-                            : "border-accent bg-accent/20 text-fg font-semibold shadow-xs"
-                          : params.invert
-                            ? "border-neutral-200 text-neutral-600 hover:bg-neutral-100"
-                            : "border-border/60 text-fg-muted hover:border-border",
-                      )}
-                    >
-                      <Sparkles className="size-3 text-accent" />
-                      <span>HD Neural Depth</span>
-                    </button>
-                  </div>
-                  {depthMode === "neural" && (
-                    <div className="mt-2 flex items-center justify-between text-[11px]">
-                      <span className={params.invert ? "text-neutral-500" : "text-fg-subtle"}>
-                        Volumetric anatomical surface
+                        Particle Palette
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => handleDepthModeChange("standard")}
+                      <div className="w-32">
+                        <ToggleRow
+                          label="Invert"
+                          icon={<FlipHorizontal2 className="size-3.5" />}
+                          checked={params.invert}
+                          onCheckedChange={(v) => patch({ invert: v })}
+                          invert={params.invert}
+                        />
+                      </div>
+                    </div>
+
+                    <div
+                      className={cn(
+                        "grid grid-cols-3 gap-1 rounded-xl border p-1",
+                        params.invert
+                          ? "border-neutral-200 bg-neutral-100"
+                          : "border-border bg-bg-subtle",
+                      )}
+                    >
+                      {(
+                        [
+                          ["mono", "Mono", "B&W"],
+                          ["hybrid", "Hybrid", "Color + B&W"],
+                          ["color", "Color", "Full RGB"],
+                        ] as const
+                      ).map(([mode, label, sub]) => {
+                        const currentMode = params.colorStyle ?? (params.color ? "color" : "mono");
+                        const active = currentMode === mode;
+                        return (
+                          <button
+                            key={mode}
+                            type="button"
+                            onClick={() =>
+                              patch({
+                                colorStyle: mode,
+                                color: mode !== "mono",
+                              })
+                            }
+                            className={cn(
+                              "flex flex-col items-center justify-center rounded-lg py-1.5 px-1 text-center transition-all",
+                              active
+                                ? params.invert
+                                  ? "bg-white text-neutral-950 shadow-sm font-semibold border border-neutral-300"
+                                  : "bg-bg-elevated text-fg shadow-sm font-semibold border border-border/80"
+                                : params.invert
+                                  ? "text-neutral-600 hover:bg-white/60 hover:text-neutral-900"
+                                  : "text-fg-muted hover:bg-bg/50 hover:text-fg",
+                            )}
+                          >
+                            <span className="text-xs">{label}</span>
+                            <span
+                              className={cn(
+                                "text-[10px] tracking-tight",
+                                params.invert ? "text-neutral-500" : "text-fg-subtle",
+                              )}
+                            >
+                              {sub}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {(params.colorStyle ?? (params.color ? "color" : "mono")) === "hybrid" && (
+                      <div
                         className={cn(
-                          "underline font-medium hover:opacity-80 transition-opacity",
-                          params.invert ? "text-neutral-900" : "text-accent",
+                          "mt-1 rounded-xl border p-2.5",
+                          params.invert
+                            ? "border-neutral-200 bg-neutral-50"
+                            : "border-border/60 bg-bg/60",
                         )}
                       >
-                        Revert to standard
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="mt-2 grid grid-cols-2 gap-3">
-                  <ToggleRow
-                    label="Straighten"
-                    checked={params.straighten}
-                    onCheckedChange={(v) => patch({ straighten: v })}
-                    invert={params.invert}
-                  />
-                  <ToggleRow
-                    label="Cut background"
-                    checked={params.removeBg}
-                    onCheckedChange={(v) => patch({ removeBg: v })}
-                    invert={params.invert}
-                  />
-                </div>
-
-                {/* Motion & Proximity / Gyro Controls */}
-                <div
-                  className={cn(
-                    "mt-3 rounded-xl border p-2.5 transition-all",
-                    params.invert
-                      ? "border-neutral-200 bg-neutral-50/80"
-                      : "border-border/70 bg-bg-elevated/50",
-                  )}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <span
-                      className={cn(
-                        "text-[11px] font-semibold uppercase tracking-[0.14em]",
-                        params.invert ? "text-neutral-700" : "text-fg-muted",
-                      )}
-                    >
-                      Motion & View
-                    </span>
-                    <span
-                      className={cn(
-                        "text-[10px]",
-                        params.motionSensor ? "text-accent font-medium" : "text-fg-subtle",
-                      )}
-                    >
-                      {params.motionSensor ? "Tilt Sensor ON" : "Tilt Sensor OFF (Stable)"}
-                    </span>
-                  </div>
-
-                  <div className="space-y-2">
-                    <ToggleRow
-                      label="Slow sway (left ↔ right)"
-                      icon={<Waves className="size-3.5 text-accent shrink-0" />}
-                      checked={params.slowSway ?? true}
-                      onCheckedChange={(v) => patch({ slowSway: v })}
-                      invert={params.invert}
-                    />
-                    <ToggleRow
-                      label="Device tilt / motion sensor"
-                      icon={<Smartphone className="size-3.5 text-accent shrink-0" />}
-                      checked={params.motionSensor ?? false}
-                      onCheckedChange={async (v) => {
-                        if (v && engineRef.current) {
-                          const allowed = await engineRef.current.requestGyro();
-                          if (!allowed) {
-                            setNotification("Device motion permission was not granted.");
-                            window.setTimeout(() => setNotification(null), 3000);
-                            return;
-                          }
-                        }
-                        patch({ motionSensor: v });
-                        setNotification(
-                          v
-                            ? "Device tilt sensor enabled."
-                            : "Device tilt disabled. Face will continue gentle slow sway.",
-                        );
-                        window.setTimeout(() => setNotification(null), 3000);
-                      }}
-                      invert={params.invert}
-                    />
-                  </div>
-                  <p
-                    className={cn(
-                      "mt-2 text-[10px] leading-relaxed",
-                      params.invert ? "text-neutral-500" : "text-fg-subtle",
+                        <Field
+                          label="Hybrid Color Ratio (Derived from Face)"
+                          value={`${Math.round((params.colorMix ?? 0.5) * 100)}% Color · ${Math.round((1 - (params.colorMix ?? 0.5)) * 100)}% B&W`}
+                          invert={params.invert}
+                        >
+                          <Slider
+                            min={0.1}
+                            max={0.9}
+                            step={0.05}
+                            value={[params.colorMix ?? 0.5]}
+                            onValueChange={([v]) => patch({ colorMix: v ?? 0.5 })}
+                            invert={params.invert}
+                          />
+                        </Field>
+                        <p
+                          className={cn(
+                            "mt-1 text-[11px]",
+                            params.invert ? "text-neutral-500" : "text-fg-subtle",
+                          )}
+                        >
+                          Interweaves photorealistic colors from the face with silver monochrome particles.
+                        </p>
+                      </div>
                     )}
-                  >
-                    Keep tilt sensor off to avoid shaking when holding or moving your phone. The face will gently sway back and forth on its own.
-                  </p>
-                </div>
+
+                    <Field label="Particles" value={`${Math.round(params.particles / 1000)}k`} invert={params.invert}>
+                      <Slider
+                        min={5000}
+                        max={100000}
+                        step={1000}
+                        value={[params.particles]}
+                        onValueChange={([v]) => patch({ particles: v ?? params.particles })}
+                        invert={params.invert}
+                      />
+                    </Field>
+                    <Field label="Point Size" value={params.size.toFixed(1)} invert={params.invert}>
+                      <Slider
+                        min={0.8}
+                        max={4}
+                        step={0.1}
+                        value={[params.size]}
+                        onValueChange={([v]) => patch({ size: v ?? params.size })}
+                        invert={params.invert}
+                      />
+                    </Field>
+                  </div>
+                )}
+
+                {activeTab === "depth" && (
+                  <div className="flex flex-col gap-2.5">
+                    {/* 3D Relief Engine Architecture */}
+                    <div
+                      className={cn(
+                        "rounded-xl border p-2.5 transition-all",
+                        params.invert
+                          ? "border-neutral-200 bg-neutral-50/80"
+                          : "border-border/70 bg-bg-elevated/50",
+                      )}
+                    >
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span
+                          className={cn(
+                            "text-[11px] font-semibold uppercase tracking-[0.14em]",
+                            params.invert ? "text-neutral-700" : "text-fg-muted",
+                          )}
+                        >
+                          3D Relief Engine
+                        </span>
+                        <span
+                          className={cn(
+                            "text-[10px]",
+                            modelCached
+                              ? "text-emerald-500 font-medium"
+                              : downloadingModel
+                                ? "text-accent font-medium animate-pulse"
+                                : "text-fg-subtle",
+                          )}
+                        >
+                          {modelCached
+                            ? `✓ Cached locally (${getModelCacheSize()})`
+                            : downloadingModel
+                              ? `Downloading AI (${downloadProgress ?? 0}%)`
+                              : "Fast dome"}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleDepthModeChange("standard")}
+                          className={cn(
+                            "rounded-lg py-1.5 px-2 text-xs font-medium border transition-all text-center flex items-center justify-center gap-1.5",
+                            depthMode === "standard"
+                              ? params.invert
+                                ? "border-neutral-400 bg-white text-neutral-950 font-semibold shadow-xs"
+                                : "border-accent bg-accent/20 text-fg font-semibold shadow-xs"
+                              : params.invert
+                                ? "border-neutral-200 text-neutral-600 hover:bg-neutral-100"
+                                : "border-border/60 text-fg-muted hover:border-border",
+                          )}
+                        >
+                          <span>Standard Dome</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDepthModeChange("neural")}
+                          className={cn(
+                            "rounded-lg py-1.5 px-2 text-xs font-medium border transition-all text-center flex items-center justify-center gap-1.5",
+                            depthMode === "neural"
+                              ? params.invert
+                                ? "border-neutral-400 bg-white text-neutral-950 font-semibold shadow-xs"
+                                : "border-accent bg-accent/20 text-fg font-semibold shadow-xs"
+                              : params.invert
+                                ? "border-neutral-200 text-neutral-600 hover:bg-neutral-100"
+                                : "border-border/60 text-fg-muted hover:border-border",
+                          )}
+                        >
+                          <Sparkles className="size-3 text-accent" />
+                          <span>HD Neural Depth</span>
+                        </button>
+                      </div>
+                      {depthMode === "neural" && (
+                        <div className="mt-2 flex items-center justify-between text-[11px]">
+                          <span className={params.invert ? "text-neutral-500" : "text-fg-subtle"}>
+                            Volumetric anatomical surface
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleDepthModeChange("standard")}
+                            className={cn(
+                              "underline font-medium hover:opacity-80 transition-opacity",
+                              params.invert ? "text-neutral-900" : "text-accent",
+                            )}
+                          >
+                            Revert to standard
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Subject Reconstruction Classifier / Override */}
+                    <div
+                      className={cn(
+                        "rounded-xl border p-2.5 transition-all",
+                        params.invert
+                          ? "border-neutral-200 bg-neutral-50/80"
+                          : "border-border/70 bg-bg-elevated/50",
+                      )}
+                    >
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span
+                          className={cn(
+                            "text-[11px] font-semibold uppercase tracking-[0.14em]",
+                            params.invert ? "text-neutral-700" : "text-fg-muted",
+                          )}
+                        >
+                          Subject Model
+                        </span>
+                        <span className="text-[10px] text-accent font-medium">
+                          {cacheRef.current?.subjectType === "animal"
+                            ? "Pet / Animal"
+                            : cacheRef.current?.subjectType === "face"
+                              ? "Human Portrait"
+                              : cacheRef.current?.subjectType === "text"
+                                ? "Graphic / Art"
+                                : "General"}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-4 gap-1">
+                        {(
+                          [
+                            ["auto", "Auto"],
+                            ["face", "Face"],
+                            ["animal", "Pet / Dog"],
+                            ["object", "Object"],
+                          ] as const
+                        ).map(([id, label]) => {
+                          const active = (params.subjectOverride ?? "auto") === id;
+                          return (
+                            <button
+                              key={id}
+                              type="button"
+                              onClick={() => {
+                                patch({ subjectOverride: id });
+                                setNotification(`Subject mode set to ${label}`);
+                                window.setTimeout(() => setNotification(null), 2500);
+                              }}
+                              className={cn(
+                                "rounded-lg py-1 px-1 text-[11px] font-medium border transition-all text-center",
+                                active
+                                  ? params.invert
+                                    ? "border-neutral-400 bg-white text-neutral-950 font-semibold shadow-xs"
+                                    : "border-accent bg-accent/20 text-fg font-semibold shadow-xs"
+                                  : params.invert
+                                    ? "border-neutral-200 text-neutral-600 hover:bg-neutral-100"
+                                    : "border-border/60 text-fg-muted hover:border-border",
+                              )}
+                            >
+                              <span>{label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <Field label="Depth" value={params.depth.toFixed(2)} invert={params.invert}>
+                      <Slider
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={[params.depth]}
+                        onValueChange={([v]) => patch({ depth: v ?? params.depth })}
+                        invert={params.invert}
+                      />
+                    </Field>
+                    <Field label="Contrast" value={params.contrast.toFixed(2)} invert={params.invert}>
+                      <Slider
+                        min={0.6}
+                        max={2}
+                        step={0.05}
+                        value={[params.contrast]}
+                        onValueChange={([v]) => patch({ contrast: v ?? params.contrast })}
+                        invert={params.invert}
+                      />
+                    </Field>
+                    <Field label="Detail" value={params.detail.toFixed(2)} invert={params.invert}>
+                      <Slider
+                        min={0}
+                        max={2}
+                        step={0.05}
+                        value={[params.detail]}
+                        onValueChange={([v]) => patch({ detail: v ?? params.detail })}
+                        invert={params.invert}
+                      />
+                    </Field>
+                    <Field label="Features" value={params.feature.toFixed(2)} invert={params.invert}>
+                      <Slider
+                        min={0}
+                        max={1.5}
+                        step={0.05}
+                        value={[params.feature]}
+                        onValueChange={([v]) => patch({ feature: v ?? params.feature })}
+                        invert={params.invert}
+                      />
+                    </Field>
+                    <Field label="Shadow lift (Floor)" value={params.floor.toFixed(2)} invert={params.invert}>
+                      <Slider
+                        min={0}
+                        max={0.3}
+                        step={0.01}
+                        value={[params.floor]}
+                        onValueChange={([v]) => patch({ floor: v ?? params.floor })}
+                        invert={params.invert}
+                      />
+                    </Field>
+                    <Field label="Silhouette" value={params.softness.toFixed(2)} invert={params.invert}>
+                      <Slider
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={[params.softness]}
+                        onValueChange={([v]) => patch({ softness: v ?? params.softness })}
+                        invert={params.invert}
+                      />
+                    </Field>
+                  </div>
+                )}
+
+                {activeTab === "sensors" && (
+                  <div className="flex flex-col gap-2.5">
+                    <div className="grid grid-cols-2 gap-3">
+                      <ToggleRow
+                        label="Straighten"
+                        checked={params.straighten}
+                        onCheckedChange={(v) => patch({ straighten: v })}
+                        invert={params.invert}
+                      />
+                      <ToggleRow
+                        label="Cut background"
+                        checked={params.removeBg}
+                        onCheckedChange={(v) => patch({ removeBg: v })}
+                        invert={params.invert}
+                      />
+                    </div>
+
+                    {/* Motion & Proximity / Gyro Controls */}
+                    <div
+                      className={cn(
+                        "mt-1.5 rounded-xl border p-2.5 transition-all",
+                        params.invert
+                          ? "border-neutral-200 bg-neutral-50/80"
+                          : "border-border/70 bg-bg-elevated/50",
+                      )}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span
+                          className={cn(
+                            "text-[11px] font-semibold uppercase tracking-[0.14em]",
+                            params.invert ? "text-neutral-700" : "text-fg-muted",
+                          )}
+                        >
+                          Motion & View
+                        </span>
+                        <span
+                          className={cn(
+                            "text-[10px]",
+                            params.motionSensor ? "text-accent font-medium" : "text-fg-subtle",
+                          )}
+                        >
+                          {params.motionSensor ? "Tilt Sensor ON" : "Tilt Sensor OFF"}
+                        </span>
+                      </div>
+
+                      <div className="space-y-2">
+                        <ToggleRow
+                          label="Slow sway (left ↔ right)"
+                          icon={<Waves className="size-3.5 text-accent shrink-0" />}
+                          checked={params.slowSway ?? true}
+                          onCheckedChange={(v) => patch({ slowSway: v })}
+                          invert={params.invert}
+                        />
+                        <ToggleRow
+                          label="Device tilt / motion sensor"
+                          icon={<Smartphone className="size-3.5 text-accent shrink-0" />}
+                          checked={params.motionSensor ?? false}
+                          onCheckedChange={async (v) => {
+                            if (v && engineRef.current) {
+                              const allowed = await engineRef.current.requestGyro();
+                              if (!allowed) {
+                                setNotification("Device motion permission was not granted.");
+                                window.setTimeout(() => setNotification(null), 3000);
+                                return;
+                              }
+                            }
+                            patch({ motionSensor: v });
+                            setNotification(
+                              v
+                                ? "Device tilt sensor enabled."
+                                : "Device tilt disabled. Face will continue gentle slow sway.",
+                            );
+                            window.setTimeout(() => setNotification(null), 3000);
+                          }}
+                          invert={params.invert}
+                        />
+                      </div>
+                      <p
+                        className={cn(
+                          "mt-2 text-[10px] leading-relaxed",
+                          params.invert ? "text-neutral-500" : "text-fg-subtle",
+                        )}
+                      >
+                        Keep tilt sensor off to avoid shaking when holding your device. The face will gently sway smoothly on its own.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

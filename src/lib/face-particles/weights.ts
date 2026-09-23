@@ -186,25 +186,42 @@ export function buildWeights(crop: CropResult, params: Params): WeightMaps {
   const a = params.detail;
   const b = params.feature;
   const floor = params.floor;
-  // Ensure minimum baseline particles exist across the whole subject (hair, fur, muzzle, skin)
-  // German Shepherds and dark pets have dark brown/black fur that needs higher floor to avoid empty silhouettes
+  // Ensure balanced baseline particles across the subject without muddy densification
   const subjFloor = params.invert
-    ? Math.min(floor, 0.05)
-    : Math.max(floor, hasHairSkin ? 0.28 : 0.20);
+    ? Math.min(floor, 0.06)
+    : Math.max(0.04, floor);
 
   for (let i = 0; i < weight.length; i++) {
-    // For dark regions (low tone), ensure strong edge and detail boost so features are defined
-    let wv = Math.pow(Math.max(tone[i]!, 1e-5), gamma) * (1 + a * edges[i]!) * (1 + b * L[i]!);
-    // Dark fur relief floor with edge awareness
-    const subjectMask = Math.max(hairSkin[i] ?? 0, (faceSkin[i] ?? 0));
-    wv = Math.max(wv, subjFloor * subjectMask * (1.0 + edges[i]! * 1.5));
+    const subjectMask = Math.max(mask[i] ?? 0, Math.max(hairSkin[i] ?? 0, (faceSkin[i] ?? 0)));
+    const edgeVal = edges[i]!;
+    const landmarkVal = L[i]!;
+    const t = tone[i]!;
+
+    // Contrast curve for midtones & highlights
+    const tonalPresence = Math.pow(Math.max(t, 0.05), gamma);
+
+    // Feature & texture recovery:
+    // Dark fur, dark hair, eyes, lips, and nostrils have high organic importance and edge contrast.
+    // Ensure they receive vibrant particle density rather than vanishing into empty black holes.
+    const darkFeatureLift = (1.0 - t) * edgeVal * 0.85 * subjectMask;
+    const bodyPresence = subjectMask * (0.28 + subjFloor * 1.2);
+
+    let wv = (tonalPresence * 0.72 + bodyPresence + darkFeatureLift) * (1 + a * edgeVal) * (1 + b * landmarkVal);
+
     if (params.removeBg) {
       const m = M[i]!;
-      // Clean background cutoff: completely erases particles from room/wall background
-      wv = m < 0.04 ? 0 : wv * m;
+      // Clean background cutoff: completely erases particles from room/wall/pillar backgrounds
+      // Smooth step cutoff ensures clean subject silhouette
+      const bgGate = m < 0.05 ? 0.0 : smoothstep(0.05, 0.22, m);
+      wv = wv * bgGate;
     }
     weight[i] = wv;
   }
 
   return { weight, tone, width: w, height: h };
+}
+
+function smoothstep(min: number, max: number, value: number): number {
+  const x = Math.max(0, Math.min(1, (value - min) / (max - min)));
+  return x * x * (3 - 2 * x);
 }

@@ -56,19 +56,35 @@ export function computeNeuralDepth(crop: CropResult): Float32Array {
       // Invert MediaPipe camera Z: negative Z is closer to camera
       const normZ = clamp(1.0 - (p.z - minZ) / zRange, 0.0, 1.0);
 
-      // Enhance nose and lip relief
+      // Dramatic, anatomically authentic facial feature boosts for HD Neural Depth:
+      // Nose tip & bridge: prominent forward projection (+Z)
       let boost = 0;
       if (lIdx === IDX.noseTip || lIdx === 4 || lIdx === 1) {
+        boost = 0.42;
+      } else if (lIdx === 195 || lIdx === 5 || lIdx === 6) {
+        // Nasal dorsum / bridge
+        boost = 0.32;
+      } else if (lIdx === 13 || lIdx === 14 || lIdx === 0 || lIdx === 17) {
+        // Lips / Philtrum
         boost = 0.18;
-      } else if (lIdx === 13 || lIdx === 14) {
-        // Lips
-        boost = 0.08;
-      } else if (lIdx === 33 || lIdx === 263 || lIdx === 159 || lIdx === 386) {
-        // Eye sockets: recessed
-        boost = -0.12;
+      } else if (lIdx === IDX.chin || lIdx === 152 || lIdx === 175) {
+        // Chin projection
+        boost = 0.22;
+      } else if (lIdx === 116 || lIdx === 345 || lIdx === 123 || lIdx === 352) {
+        // Zygomatic cheekbones
+        boost = 0.16;
+      } else if (lIdx === 33 || lIdx === 263 || lIdx === 159 || lIdx === 386 || lIdx === 133 || lIdx === 362) {
+        // Orbital eye sockets: deep anatomical cavity
+        boost = -0.28;
+      } else if (lIdx === 10 || lIdx === 151 || lIdx === 9 || lIdx === 8) {
+        // Forehead / Brow ridge
+        boost = 0.14;
+      } else if (lIdx === 234 || lIdx === 454 || lIdx === 127 || lIdx === 356) {
+        // Pre-auricular / temples (sides of head): deep recession towards ears
+        boost = -0.32;
       }
 
-      const val = clamp(normZ * 0.85 + 0.15 + boost, 0.05, 1.0);
+      const val = clamp(normZ * 0.95 + 0.10 + boost, 0.0, 1.2);
       const x0 = p.x | 0;
       const y0 = p.y | 0;
       const rad = radius | 0;
@@ -123,18 +139,20 @@ export function computeNeuralDepth(crop: CropResult): Float32Array {
         baseProfile *= 1.0 - neckFactor * 0.65;
       }
 
-      // Shading micro-detail from gradients
-      const shadingVariation = (lum[idx]! - 0.5) * 0.12 - (gradY[idx]! * 0.08);
+      // Shading micro-detail from gradients and luminance (Shape-from-Shading cues)
+      const shadingVariation = (lum[idx]! - 0.5) * 0.18 - (gradY[idx]! * 0.12) + (Math.abs(gradX[idx]!) * 0.08);
 
-      let dVal = baseProfile * 0.65 + shadingVariation;
+      let dVal = baseProfile * 0.65;
 
       if (hasAnchors) {
-        const wAnchor = clamp(anchorWeight[idx]! * 1.5, 0, 1);
-        dVal = dVal * (1 - wAnchor) + anchorField[idx]! * wAnchor;
+        const wAnchor = clamp(anchorWeight[idx]! * 1.8, 0, 1);
+        dVal = (dVal * (1 - wAnchor) + anchorField[idx]! * wAnchor) + shadingVariation * 0.5;
+      } else {
+        dVal = baseProfile * 0.68 + shadingVariation;
       }
 
       // Weight by foreground segmentation mask
-      dVal = clamp(dVal, 0.0, 1.0) * (0.35 + 0.65 * m);
+      dVal = clamp(dVal, 0.0, 1.2) * (0.35 + 0.65 * m);
       depth[idx] = dVal;
     }
   }

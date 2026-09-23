@@ -16,7 +16,7 @@ export const Route = createRootRoute({
       { title: APP_NAME },
       {
         name: "description",
-        content: "Turn a portrait into a living cloud of particles. On-device, private, interactive.",
+        content: "Turn a portrait into an interactive living 3D cloud of particles using on-device vision and WebGL.",
       },
       { name: "theme-color", content: "#070708" },
       { name: "apple-mobile-web-app-capable", content: "yes" },

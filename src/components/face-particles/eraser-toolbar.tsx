@@ -145,7 +145,7 @@ export function EraserToolbar({
         <div className="flex items-center justify-between border-t border-white/10 pt-2 text-xs">
           <div className="flex items-center gap-2">
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               disabled={!canUndo}
               onClick={onUndo}
@@ -155,7 +155,7 @@ export function EraserToolbar({
               Undo
             </Button>
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               disabled={erasedCount === 0}
               onClick={onReset}

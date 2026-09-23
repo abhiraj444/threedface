@@ -17,6 +17,7 @@ export interface Params {
   removeBg: boolean;
   motionSensor?: boolean;
   slowSway?: boolean;
+  subjectOverride?: "auto" | "face" | "animal" | "text" | "object";
 }
 
 export interface ParticleSet {

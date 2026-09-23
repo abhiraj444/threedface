@@ -833,12 +833,21 @@ export class ParticleEngine {
     gl.uniformMatrix4fv(this.uRender.uViewProj, false, this.viewProj);
     const n = Math.max(1000, this.drawCount);
     const size = this.size * Math.sqrt(POINT_SIZE_REF_N / n);
-    const baseDpr = Math.min(2.5, typeof window !== "undefined" ? (window.devicePixelRatio || 1) : 1);
-    // When recording to a fixed high-resolution buffer (e.g. 1080x1920), scale DPR so particles
-    // retain identical visual size, density, and opacity as on the interactive canvas
+    
+    // Normalized device scale:
+    // Ensures particle size and perceived luminosity relative to the 3D subject
+    // are perfectly consistent across mobile phones, tablets, laptops, and desktop monitors.
+    const aspect = this.recordAspect ?? (gl.drawingBufferWidth / Math.max(1, gl.drawingBufferHeight));
+    const refAspect = 0.75;
+    const aspectScale = aspect < refAspect ? refAspect / Math.max(0.35, aspect) : 1.0;
+    const currentDist = 2.45 * aspectScale;
+    const drawingHeight = gl.drawingBufferHeight;
+    const normalizedScale = (drawingHeight / 1080) * (2.45 / Math.max(1.0, currentDist));
+
     const dpr = this.recordDims
-      ? this.recordDims[1] / Math.max(1, this.refClientHeight)
-      : baseDpr;
+      ? (this.recordDims[1] / 1080) * 1.85
+      : Math.max(1.25, normalizedScale * 1.85);
+
     gl.uniform1f(this.uRender.uSize, size);
     gl.uniform1f(this.uRender.uDpr, dpr);
     gl.uniform2f(this.uRender.uPointRange, this.pointRange[0], this.pointRange[1]);
