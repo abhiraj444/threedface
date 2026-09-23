@@ -12,8 +12,8 @@ export const BLUE_NOISE_SIZE = 128;
 
 export const DEFAULT_PARAMS: Params = {
   particles: N_DEFAULT,
-  size: 1.85,
-  contrast: 1.15,
+  size: 2.0,
+  contrast: 1.2,
   detail: 0.8,
   feature: 0.5,
   floor: 0.08,
@@ -27,7 +27,7 @@ export const DEFAULT_PARAMS: Params = {
   removeBg: true,
   motionSensor: false, // Disabled by default per user request; device tilt won't shake portrait
   slowSway: true, // Smooth continuous left-to-right gentle sway
-  subjectOverride: "auto",
+  renderTheme: "particle",
 };
 
 const HASH_KEYS: (keyof Params)[] = [
@@ -47,7 +47,7 @@ const HASH_KEYS: (keyof Params)[] = [
   "removeBg",
   "motionSensor",
   "slowSway",
-  "subjectOverride",
+  "renderTheme",
 ];
 
 export function defaultParticleCount(): number {

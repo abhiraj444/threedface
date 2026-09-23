@@ -1,4 +1,5 @@
 export type ColorMode = "mono" | "hybrid" | "color";
+export type RenderTheme = "particle" | "water" | "glass" | "cosmic" | "gold";
 
 export interface Params {
   particles: number;
@@ -17,7 +18,7 @@ export interface Params {
   removeBg: boolean;
   motionSensor?: boolean;
   slowSway?: boolean;
-  subjectOverride?: "auto" | "face" | "animal" | "text" | "object";
+  renderTheme?: RenderTheme;
 }
 
 export interface ParticleSet {

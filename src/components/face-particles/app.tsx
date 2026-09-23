@@ -4,11 +4,15 @@ import {
   Camera,
   Contrast,
   Download,
+  Droplets,
   Eraser,
   FlipHorizontal2,
+  Gem,
   ImagePlus,
   Loader2,
+  Orbit,
   Printer,
+  RotateCcw,
   ScanFace,
   Sliders,
   Smartphone,
@@ -64,6 +68,7 @@ export function FaceParticlesApp() {
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
   const [glOk, setGlOk] = useState(true);
+  const [engineVersion, setEngineVersion] = useState(0);
   const [anim, setAnim] = useState<AnimState>("building");
   const [recording, setRecording] = useState<string | null>(null);
   const [hasPortrait, setHasPortrait] = useState(false);
@@ -155,7 +160,7 @@ export function FaceParticlesApp() {
     return () => {
       engine?.dispose();
     };
-  }, []);
+  }, [engineVersion]);
 
   useEffect(() => {
     paramsRef.current = params;
@@ -167,18 +172,8 @@ export function FaceParticlesApp() {
     engine.setColorMode(params.colorStyle ?? (params.color ? "color" : "mono"));
     engine.setColorMix(params.colorMix ?? 0.5);
     engine.setInvert(params.invert);
+    engine.setTheme(params.renderTheme ?? "particle");
   }, [params]);
-
-  useEffect(() => {
-    if (!isScrubbing) return;
-    const onUp = () => setIsScrubbing(false);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
-    return () => {
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-    };
-  }, [isScrubbing]);
 
   const runSource = useCallback(async (job: () => Promise<PipelineCache>, hideHero = true) => {
     setError(null);
@@ -194,6 +189,7 @@ export function FaceParticlesApp() {
       engine.setColorMode(paramsRef.current.colorStyle ?? (paramsRef.current.color ? "color" : "mono"));
       engine.setColorMix(paramsRef.current.colorMix ?? 0.5);
       engine.setInvert(paramsRef.current.invert);
+      engine.setTheme(paramsRef.current.renderTheme ?? "particle");
       engine.play("build");
       setHasPortrait(true);
       setVisionReady(true);
@@ -281,7 +277,7 @@ export function FaceParticlesApp() {
         "contrast", "detail", "feature", "floor", "softness", "invert", "removeBg",
       ];
       const needsField = fieldKeys.some((k) => k in partial);
-      const needsCrop = "straighten" in partial || "subjectOverride" in partial;
+      const needsCrop = "straighten" in partial;
 
       if (needsCrop || needsField) {
         window.clearTimeout(rebuildTimer.current);
@@ -465,8 +461,15 @@ export function FaceParticlesApp() {
           <div className="max-w-sm">
             <h1 className="font-display text-3xl">This device cannot draw particles</h1>
             <p className="mt-3 text-sm text-fg-muted">
-              Face Particles needs WebGL2, which this browser does not expose.
+              Face Particles needs WebGL2, which this browser does not expose or was temporarily lost.
             </p>
+            <button
+              type="button"
+              onClick={() => setEngineVersion((v) => v + 1)}
+              className="mt-5 inline-flex items-center gap-2 rounded-full border border-border bg-bg-elevated px-4 py-2 text-sm font-medium text-fg hover:bg-bg-elevated/80 transition-all cursor-pointer"
+            >
+              Retry Canvas
+            </button>
           </div>
         </div>
       )}
@@ -827,6 +830,26 @@ export function FaceParticlesApp() {
                 <span>{(params.slowSway ?? true) ? "Swaying" : "Static"}</span>
               </button>
 
+              <button
+                type="button"
+                onClick={() => {
+                  engineRef.current?.resetOrbit(true);
+                  setNotification("Aligned 3D portrait to front center");
+                  window.setTimeout(() => setNotification(null), 2000);
+                }}
+                title="Align 3D structure straight front (or double-click canvas, or press 'R')"
+                className={cn(
+                  "flex h-10 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-colors",
+                  params.invert
+                    ? "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-950"
+                    : "text-fg-muted hover:bg-bg-subtle hover:text-fg",
+                )}
+              >
+                <RotateCcw className="size-3.5 text-accent" />
+                <span className="hidden sm:inline">Align Front</span>
+                <span className="sm:hidden">Align</span>
+              </button>
+
               <div
                 className={cn(
                   "my-1.5 w-px self-stretch",
@@ -1050,6 +1073,73 @@ export function FaceParticlesApp() {
                       })}
                     </div>
 
+                    {/* 3D Structure Aesthetic Theme */}
+                    <div className="flex flex-col gap-1.5 mt-1">
+                      <span
+                        className={cn(
+                          "text-xs font-medium uppercase tracking-[0.14em]",
+                          params.invert ? "text-neutral-500" : "text-fg-subtle",
+                        )}
+                      >
+                        Aesthetic Material Theme
+                      </span>
+                      <div
+                        className={cn(
+                          "grid grid-cols-2 sm:grid-cols-3 gap-1 rounded-xl border p-1",
+                          params.invert
+                            ? "border-neutral-200 bg-neutral-100"
+                            : "border-border bg-bg-subtle",
+                        )}
+                      >
+                        {(
+                          [
+                            ["particle", "Particle Cloud", "Soft stipple", <Sparkles key="p" className="size-3.5" />],
+                            ["water", "Liquid Dewdrops", "Water droplets", <Droplets key="w" className="size-3.5" />],
+                            ["glass", "Prismatic Glass", "Crystal diamond", <Gem key="g" className="size-3.5" />],
+                            ["cosmic", "Cosmic Starlight", "Diffraction spikes", <Orbit key="c" className="size-3.5" />],
+                            ["gold", "Molten Gold", "Burnished bronze", <Sparkles key="m" className="size-3.5" />],
+                          ] as const
+                        ).map(([themeKey, label, sub, icon]) => {
+                          const currentTheme = params.renderTheme ?? "particle";
+                          const active = currentTheme === themeKey;
+                          return (
+                            <button
+                              key={themeKey}
+                              type="button"
+                              onClick={() => {
+                                patch({ renderTheme: themeKey });
+                                setNotification(`Switched theme to ${label}`);
+                                window.setTimeout(() => setNotification(null), 2000);
+                              }}
+                              className={cn(
+                                "flex flex-col items-start rounded-lg p-2 text-left transition-all",
+                                active
+                                  ? params.invert
+                                    ? "bg-white text-neutral-950 shadow-sm font-semibold border border-neutral-300"
+                                    : "bg-bg-elevated text-fg shadow-sm font-semibold border border-border/80"
+                                  : params.invert
+                                    ? "text-neutral-600 hover:bg-white/60 hover:text-neutral-900"
+                                    : "text-fg-muted hover:bg-bg/50 hover:text-fg",
+                              )}
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <span className={active ? "text-accent" : "text-fg-subtle"}>{icon}</span>
+                                <span className="text-xs">{label}</span>
+                              </div>
+                              <span
+                                className={cn(
+                                  "text-[10px] tracking-tight mt-0.5",
+                                  params.invert ? "text-neutral-500" : "text-fg-subtle",
+                                )}
+                              >
+                                {sub}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
                     {(params.colorStyle ?? (params.color ? "color" : "mono")) === "hybrid" && (
                       <div
                         className={cn(
@@ -1196,71 +1286,6 @@ export function FaceParticlesApp() {
                           </button>
                         </div>
                       )}
-                    </div>
-
-                    {/* Subject Reconstruction Classifier / Override */}
-                    <div
-                      className={cn(
-                        "rounded-xl border p-2.5 transition-all",
-                        params.invert
-                          ? "border-neutral-200 bg-neutral-50/80"
-                          : "border-border/70 bg-bg-elevated/50",
-                      )}
-                    >
-                      <div className="flex items-center justify-between mb-1.5">
-                        <span
-                          className={cn(
-                            "text-[11px] font-semibold uppercase tracking-[0.14em]",
-                            params.invert ? "text-neutral-700" : "text-fg-muted",
-                          )}
-                        >
-                          Subject Model
-                        </span>
-                        <span className="text-[10px] text-accent font-medium">
-                          {cacheRef.current?.subjectType === "animal"
-                            ? "Pet / Animal"
-                            : cacheRef.current?.subjectType === "face"
-                              ? "Human Portrait"
-                              : cacheRef.current?.subjectType === "text"
-                                ? "Graphic / Art"
-                                : "General"}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-4 gap-1">
-                        {(
-                          [
-                            ["auto", "Auto"],
-                            ["face", "Face"],
-                            ["animal", "Pet / Dog"],
-                            ["object", "Object"],
-                          ] as const
-                        ).map(([id, label]) => {
-                          const active = (params.subjectOverride ?? "auto") === id;
-                          return (
-                            <button
-                              key={id}
-                              type="button"
-                              onClick={() => {
-                                patch({ subjectOverride: id });
-                                setNotification(`Subject mode set to ${label}`);
-                                window.setTimeout(() => setNotification(null), 2500);
-                              }}
-                              className={cn(
-                                "rounded-lg py-1 px-1 text-[11px] font-medium border transition-all text-center",
-                                active
-                                  ? params.invert
-                                    ? "border-neutral-400 bg-white text-neutral-950 font-semibold shadow-xs"
-                                    : "border-accent bg-accent/20 text-fg font-semibold shadow-xs"
-                                  : params.invert
-                                    ? "border-neutral-200 text-neutral-600 hover:bg-neutral-100"
-                                    : "border-border/60 text-fg-muted hover:border-border",
-                              )}
-                            >
-                              <span>{label}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
                     </div>
 
                     <Field label="Depth" value={params.depth.toFixed(2)} invert={params.invert}>
@@ -1411,6 +1436,128 @@ export function FaceParticlesApp() {
                       >
                         Keep tilt sensor off to avoid shaking when holding your device. The face will gently sway smoothly on its own.
                       </p>
+                    </div>
+
+                    {/* 3D Structure Alignment & Orbit */}
+                    <div
+                      className={cn(
+                        "mt-1.5 rounded-xl border p-2.5 transition-all",
+                        params.invert
+                          ? "border-neutral-200 bg-neutral-50/80"
+                          : "border-border/70 bg-bg-elevated/50",
+                      )}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span
+                          className={cn(
+                            "text-[11px] font-semibold uppercase tracking-[0.14em]",
+                            params.invert ? "text-neutral-700" : "text-fg-muted",
+                          )}
+                        >
+                          3D Alignment & Angle
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            engineRef.current?.resetOrbit(true);
+                            setNotification("Aligned to straight front");
+                            window.setTimeout(() => setNotification(null), 2000);
+                          }}
+                          className="h-7 text-xs gap-1.5 px-2.5"
+                        >
+                          <RotateCcw className="size-3" />
+                          Align Front
+                        </Button>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className={params.invert ? "text-neutral-600" : "text-fg-subtle"}>Rotate Left / Right</span>
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (engineRef.current) {
+                                  engineRef.current.yaw -= 0.12;
+                                  engineRef.current.userOrbit = true;
+                                }
+                              }}
+                              className={cn(
+                                "px-2 py-0.5 text-xs rounded border transition-colors",
+                                params.invert ? "border-neutral-200 hover:bg-neutral-100" : "border-border hover:bg-bg-subtle",
+                              )}
+                            >
+                              ◀ -15°
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (engineRef.current) {
+                                  engineRef.current.yaw += 0.12;
+                                  engineRef.current.userOrbit = true;
+                                }
+                              }}
+                              className={cn(
+                                "px-2 py-0.5 text-xs rounded border transition-colors",
+                                params.invert ? "border-neutral-200 hover:bg-neutral-100" : "border-border hover:bg-bg-subtle",
+                              )}
+                            >
+                              +15° ▶
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between text-xs">
+                          <span className={params.invert ? "text-neutral-600" : "text-fg-subtle"}>Tilt Up / Down</span>
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (engineRef.current) {
+                                  engineRef.current.pitch -= 0.08;
+                                  engineRef.current.userOrbit = true;
+                                }
+                              }}
+                              className={cn(
+                                "px-2 py-0.5 text-xs rounded border transition-colors",
+                                params.invert ? "border-neutral-200 hover:bg-neutral-100" : "border-border hover:bg-bg-subtle",
+                              )}
+                            >
+                              ▲ Up
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (engineRef.current) {
+                                  engineRef.current.pitch += 0.08;
+                                  engineRef.current.userOrbit = true;
+                                }
+                              }}
+                              className={cn(
+                                "px-2 py-0.5 text-xs rounded border transition-colors",
+                                params.invert ? "border-neutral-200 hover:bg-neutral-100" : "border-border hover:bg-bg-subtle",
+                              )}
+                            >
+                              ▼ Down
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div
+                        className={cn(
+                          "mt-2.5 rounded-lg p-2 text-[10px] leading-relaxed border",
+                          params.invert ? "bg-white border-neutral-200 text-neutral-600" : "bg-bg-subtle/80 border-border/50 text-fg-subtle",
+                        )}
+                      >
+                        <div className="font-semibold text-fg mb-0.5">Desktop & Mobile Gestures:</div>
+                        <ul className="list-disc pl-3.5 space-y-0.5">
+                          <li><strong>Desktop:</strong> Right-click drag or Shift+drag anywhere on portrait to freely orbit.</li>
+                          <li><strong>Desktop:</strong> Scroll wheel to zoom. Double-click or press <kbd className="px-1 py-0.5 rounded border bg-bg-muted font-mono">R</kbd> to align front.</li>
+                          <li><strong>Mobile:</strong> Use 2 fingers to drag & align the 3D head angle.</li>
+                        </ul>
+                      </div>
                     </div>
                   </div>
                 )}

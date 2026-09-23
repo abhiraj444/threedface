@@ -114,8 +114,7 @@ export async function generateFromCanvas(
   const vision = await analyze(img);
 
   // Subject Classifier: Face vs Text/Graphic vs Animal vs Object
-  const explicitType = params.subjectOverride && params.subjectOverride !== "auto" ? params.subjectOverride : undefined;
-  const subjectType = classifySubject(img, vision, { explicitType });
+  const subjectType = classifySubject(img, vision);
 
   if (subjectType === "text") {
     onProgress?.({ stage: "Detected graphic / text · Centering and sculpting 3D form", fraction: 0.4 });
@@ -190,32 +189,6 @@ export function switchDepthMode(
 }
 
 export function recrop(cache: PipelineCache, params: Params): ParticleSet {
-  if (params.subjectOverride && params.subjectOverride !== "auto" && params.subjectOverride !== cache.subjectType) {
-    cache.subjectType = params.subjectOverride;
-    if (params.subjectOverride === "animal") {
-      cache.subjectField = buildAnimalSubject(cache.source, params);
-      cache.crop = cache.subjectField.crop;
-      cache.standardDepth = cache.subjectField.depthMap;
-      cache.neuralDepth = undefined;
-      cache.depth = cache.standardDepth;
-      return rebuildField(cache, params);
-    } else if (params.subjectOverride === "text") {
-      cache.subjectField = buildGraphicSubject(cache.source, params);
-      cache.crop = cache.subjectField.crop;
-      cache.standardDepth = cache.subjectField.depthMap;
-      cache.neuralDepth = undefined;
-      cache.depth = cache.standardDepth;
-      return rebuildField(cache, params);
-    } else if (params.subjectOverride === "object") {
-      cache.subjectField = buildObjectSubject(cache.source, params);
-      cache.crop = cache.subjectField.crop;
-      cache.standardDepth = cache.subjectField.depthMap;
-      cache.neuralDepth = undefined;
-      cache.depth = cache.standardDepth;
-      return rebuildField(cache, params);
-    }
-  }
-
   if (cache.subjectType && cache.subjectType !== "face") {
     return rebuildField(cache, params);
   }

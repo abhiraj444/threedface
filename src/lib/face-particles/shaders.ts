@@ -164,102 +164,138 @@ uniform float uBreath;
 uniform float uColorMode;
 uniform float uColorMix;
 uniform float uInvert;
+uniform float uDistScale;
+uniform float uTheme;
 out float vBright;
 out vec3 vColor;
+out float vTheme;
 
 void main() {
   vec3 p = aPos;
   p.z += sin(uTime * 1.35 + aSeed * 6.28318) * uBreath;
   gl_Position = uViewProj * vec4(p, 1.0);
   
-  // Depth cueing & perspective point sizing
-  float depthScale = 0.75 + 0.25 * (1.0 - clamp(p.z * 0.75 + 0.25, 0.0, 1.0));
-  float size = uSize * uDpr * depthScale;
+  float depthScale = 0.75 + 0.25 * (1.0 - clamp(p.z * 0.85 + 0.35, 0.0, 1.0));
+  
+  // Perspective point scaling:
+  // On mobile where camera is backed away (dist=4.0), uDistScale ~ 0.61 -> scales down particle radius
+  // so 76k particles don't overlap into a solid white blur.
+  // On tablet/desktop where camera is close (dist=2.45), uDistScale = 1.0 -> particles scale up
+  // to fill facial features and contours without sparse dark voids.
+  float distScale = clamp(uDistScale, 0.52, 1.55);
+  float size = uSize * uDpr * depthScale * distScale;
   gl_PointSize = clamp(size, uPointRange.x, uPointRange.y);
   
   float tone = aTone;
-
-  // 3D Directional Lighting & Sculptural Chiaroscuro:
-  // Approximate local surface normal from 3D coordinates
-  vec3 norm = normalize(vec3(-p.x * 1.25, -p.y * 1.0, max(0.18, 0.92 - (p.x * p.x * 1.1 + p.y * p.y * 0.85))));
-  vec3 keyLight = normalize(vec3(-0.4, 0.55, 0.75));
-  vec3 fillLight = normalize(vec3(0.45, -0.3, 0.55));
-  float nDotL = max(0.0, dot(norm, keyLight));
-  float fillDot = max(0.0, dot(norm, fillLight));
-  float diffuse = 0.42 + 0.45 * nDotL + 0.15 * fillDot;
-
-  // Spatial depth cue: high forward features (+Z) receive radiant illumination, receding edges taper softly
-  float zCue = clamp(p.z * 1.35 + 0.65, 0.45, 1.25);
   
-  // Specular sheen on elevated contours (nose tip, brow, cheekbones, snout)
-  vec3 halfVec = normalize(keyLight + vec3(0.0, 0.0, 1.0));
-  float spec = pow(max(0.0, dot(norm, halfVec)), 10.0) * 0.32;
-
-  // Overall luminous brightness modulation
+  // Density-balanced brightness calibration:
+  // Mobile gets balanced highlight compression so it doesn't over-saturate;
+  // Tablet gets enhanced tone clarity so facial contours are vivid and rich.
+  float densityComp = clamp(pow(distScale, 0.42), 0.72, 1.28);
+  
   vBright = uInvert > 0.5
-    ? clamp((0.72 + 0.28 * tone) * (0.85 + 0.15 * zCue), 0.0, 1.0)
-    : clamp((0.55 + 0.45 * tone) * (0.80 + 0.20 * zCue) * diffuse + spec * 0.4, 0.0, 1.35);
+    ? (0.76 + 0.24 * tone) * (0.86 + 0.14 * depthScale)
+    : (0.58 + 0.42 * tone) * (0.82 + 0.18 * depthScale) * densityComp;
 
-  // 0.0 = Monochrome (Sculpted Titanium / Silver 3D bust), 1.0 = Full Color, 2.0 = Hybrid
+  // 0.0 = Monochrome, 1.0 = Full Color, 2.0 = Hybrid
   vec3 col;
-  
-  // Luxury 3D Sculptural Monochrome palette:
-  vec3 highlightSilver = vec3(0.96, 0.98, 1.0);
-  vec3 midtoneSilver = vec3(0.70, 0.73, 0.78);
-  vec3 shadowSilver = vec3(0.28, 0.31, 0.36);
-  
-  float lightVal = clamp(diffuse * zCue * (0.5 + 0.5 * tone) + spec, 0.0, 1.4);
-  vec3 sculptedMono = mix(shadowSilver, midtoneSilver, clamp(lightVal, 0.0, 1.0));
-  sculptedMono = mix(sculptedMono, highlightSilver, clamp(lightVal - 1.0, 0.0, 1.0) * 0.85 + spec);
-
-  // Shaded Color mode: applies 3D volumetric light to the source RGB
-  vec3 shadedColor = aColor * (0.42 + 0.58 * diffuse * zCue) + vec3(spec * 0.25);
+  vec3 vividColor = aColor;
+  float isCol = step(aSeed, clamp(uColorMix, 0.05, 0.95));
 
   if (uColorMode < 0.5) {
-    col = sculptedMono;
+    col = vec3(1.0);
   } else if (uColorMode < 1.5) {
-    col = shadedColor;
+    col = vividColor;
   } else {
-    float isCol = step(aSeed, clamp(uColorMix, 0.05, 0.95));
-    col = mix(sculptedMono, shadedColor, isCol);
+    col = mix(vec3(1.0), vividColor, isCol);
   }
 
   if (uInvert > 0.5) {
-    // For inverted fine-art mode:
-    // Carbon/sumi ink with subtle charcoal gradation
-    vec3 inkCarbon = vec3(0.03, 0.03, 0.04);
-    vec3 inkWash = vec3(0.28, 0.29, 0.32);
-    vec3 invertMono = mix(inkCarbon, inkWash, clamp((1.0 - zCue) * 0.6 + (1.0 - tone) * 0.4, 0.0, 1.0));
+    vec3 inkBlack = vec3(0.04, 0.04, 0.05);
     vec3 richColor = clamp(pow(aColor, vec3(1.1)) * 0.95, 0.0, 1.0);
-    
     if (uColorMode < 0.5) {
-      col = invertMono;
+      col = inkBlack;
     } else if (uColorMode < 1.5) {
       col = richColor;
     } else {
-      float isCol = step(aSeed, clamp(uColorMix, 0.05, 0.95));
-      col = mix(invertMono, richColor, isCol);
+      col = mix(inkBlack, richColor, isCol);
     }
   }
   vColor = col;
+  vTheme = uTheme;
 }
 `;
 
 export const RENDER_FS = `#version 300 es
-precision mediump float;
+precision highp float;
 in float vBright;
 in vec3 vColor;
+in float vTheme;
 out vec4 fragColor;
+
 void main() {
   vec2 p = gl_PointCoord * 2.0 - 1.0;
   float r2 = dot(p, p);
   if (r2 > 1.0) discard;
-  float dist = sqrt(r2);
-  // Crisp stardust core with soft luminous halo:
-  // Prevents milky/foggy clumping and gives individual 3D depth perception
-  float core = 1.0 - smoothstep(0.0, 0.92, dist);
-  float halo = exp(-r2 * 3.2);
-  float a = (core * 0.58 + halo * 0.42) * vBright;
-  fragColor = vec4(vColor * a, a);
+
+  // Theme 0: Fine-Art Particle (Classic soft gaussian stipple)
+  if (vTheme < 0.5) {
+    float a = exp(-r2 * 2.6) * vBright;
+    fragColor = vec4(vColor * a, a);
+    return;
+  }
+
+  // Theme 1: Liquid Dewdrops / Water Beads (Translucent liquid lens with specular highlights)
+  if (vTheme < 1.5) {
+    float z = sqrt(max(0.0, 1.0 - r2));
+    vec3 N = vec3(p.x, p.y, z);
+    vec3 L = normalize(vec3(0.35, 0.48, 0.80));
+    vec3 V = vec3(0.0, 0.0, 1.0);
+    vec3 H = normalize(L + V);
+    float spec = pow(max(0.0, dot(N, H)), 24.0);
+    float fresnel = pow(1.0 - z, 2.0);
+    float waterAlpha = smoothstep(1.0, 0.86, r2) * (0.32 + 0.68 * fresnel) * vBright;
+    vec3 waterColor = mix(vColor, vec3(1.0), spec * 0.95 + fresnel * 0.35);
+    fragColor = vec4(waterColor * waterAlpha, waterAlpha);
+    return;
+  }
+
+  // Theme 2: Prismatic Crystal / Diamond Dust (Faceted refraction with spectral dispersion)
+  if (vTheme < 2.5) {
+    float z = sqrt(max(0.0, 1.0 - r2));
+    float star = pow(max(0.0, 1.0 - abs(p.x) * 2.6) * max(0.0, 1.0 - abs(p.y) * 2.6), 2.2) * 1.6;
+    vec3 prism = vec3(
+      smoothstep(1.0, 0.55, dot(p + vec2(0.05, 0.0), p + vec2(0.05, 0.0))),
+      smoothstep(1.0, 0.55, r2),
+      smoothstep(1.0, 0.55, dot(p - vec2(0.05, 0.0), p - vec2(0.05, 0.0)))
+    );
+    float crystalAlpha = (exp(-r2 * 1.9) * 0.7 + star * 0.55) * vBright;
+    vec3 crystalCol = mix(vColor * prism, vec3(1.0), clamp(star, 0.0, 1.0));
+    fragColor = vec4(crystalCol * crystalAlpha, crystalAlpha);
+    return;
+  }
+
+  // Theme 3: Cosmic Starlight / Nebula Constellation (Diamond stellar spikes & ion halo)
+  if (vTheme < 3.5) {
+    float spike = (pow(max(0.0, 1.0 - abs(p.x) * 3.4), 3.0) * max(0.0, 1.0 - abs(p.y))
+                 + pow(max(0.0, 1.0 - abs(p.y) * 3.4), 3.0) * max(0.0, 1.0 - abs(p.x))) * 0.85;
+    float aura = exp(-r2 * 1.9);
+    float starAlpha = (aura * 0.72 + spike) * vBright;
+    vec3 starCol = mix(vColor, vec3(0.85, 0.94, 1.0), spike * 0.75);
+    fragColor = vec4(starCol * starAlpha, starAlpha);
+    return;
+  }
+
+  // Theme 4: Molten Gold / Polished Bronze (Warm metallic luster with anisotropic sheen)
+  float z = sqrt(max(0.0, 1.0 - r2));
+  vec3 N = vec3(p.x, p.y, z);
+  vec3 L = normalize(vec3(0.42, 0.52, 0.74));
+  vec3 V = vec3(0.0, 0.0, 1.0);
+  vec3 H = normalize(L + V);
+  float spec = pow(max(0.0, dot(N, H)), 14.0);
+  vec3 goldBase = vec3(1.0, 0.82, 0.42);
+  vec3 goldCol = mix(vColor * goldBase, vec3(1.0, 0.96, 0.82), spec * 0.85);
+  float goldAlpha = smoothstep(1.0, 0.72, r2) * (0.65 + 0.35 * spec) * vBright;
+  fragColor = vec4(goldCol * goldAlpha, goldAlpha);
 }
 `;

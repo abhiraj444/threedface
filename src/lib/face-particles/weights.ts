@@ -188,40 +188,22 @@ export function buildWeights(crop: CropResult, params: Params): WeightMaps {
   const floor = params.floor;
   // Ensure balanced baseline particles across the subject without muddy densification
   const subjFloor = params.invert
-    ? Math.min(floor, 0.06)
-    : Math.max(0.04, floor);
+    ? Math.min(floor, 0.05)
+    : Math.max(0.02, floor);
 
   for (let i = 0; i < weight.length; i++) {
-    const subjectMask = Math.max(mask[i] ?? 0, Math.max(hairSkin[i] ?? 0, (faceSkin[i] ?? 0)));
-    const edgeVal = edges[i]!;
-    const landmarkVal = L[i]!;
-    const t = tone[i]!;
-
-    // Contrast curve for midtones & highlights
-    const tonalPresence = Math.pow(Math.max(t, 0.05), gamma);
-
-    // Feature & texture recovery:
-    // Dark fur, dark hair, eyes, lips, and nostrils have high organic importance and edge contrast.
-    // Ensure they receive vibrant particle density rather than vanishing into empty black holes.
-    const darkFeatureLift = (1.0 - t) * edgeVal * 0.85 * subjectMask;
-    const bodyPresence = subjectMask * (0.28 + subjFloor * 1.2);
-
-    let wv = (tonalPresence * 0.72 + bodyPresence + darkFeatureLift) * (1 + a * edgeVal) * (1 + b * landmarkVal);
-
+    // Feature & tone weighting: preserves high contrast between features and smooth regions
+    let wv = Math.pow(Math.max(tone[i]!, 1e-5), gamma) * (1 + a * edges[i]!) * (1 + b * L[i]!);
+    // Subtle shadow lift respecting user's floor parameter
+    const subjectMask = Math.max(hairSkin[i] ?? 0, (faceSkin[i] ?? 0));
+    wv = Math.max(wv, subjFloor * subjectMask * (1.0 + edges[i]! * 0.5));
     if (params.removeBg) {
       const m = M[i]!;
-      // Clean background cutoff: completely erases particles from room/wall/pillar backgrounds
-      // Smooth step cutoff ensures clean subject silhouette
-      const bgGate = m < 0.05 ? 0.0 : smoothstep(0.05, 0.22, m);
-      wv = wv * bgGate;
+      // Clean background cutoff: completely erases particles from room/wall background
+      wv = m < 0.04 ? 0 : wv * m;
     }
     weight[i] = wv;
   }
 
   return { weight, tone, width: w, height: h };
-}
-
-function smoothstep(min: number, max: number, value: number): number {
-  const x = Math.max(0, Math.min(1, (value - min) / (max - min)));
-  return x * x * (3 - 2 * x);
 }

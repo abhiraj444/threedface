@@ -1,4 +1,4 @@
-import type { AnimState, EffectName, ParticleSet } from "./types";
+import type { AnimState, EffectName, ParticleSet, RenderTheme } from "./types";
 import { ORBIT_LIMIT, POINT_SIZE_REF_N, TOUCH_RADIUS_FRAC, TOUCH_SLOTS } from "./config";
 import {
   createMat4,
@@ -96,6 +96,10 @@ export class ParticleEngine {
   private motionSensorEnabled = false;
   private slowSwayEnabled = true;
 
+  theme = 0; // 0: particle, 1: water, 2: glass, 3: cosmic, 4: gold
+  private currentCameraDist = 2.45;
+  private userZoom = 1.0;
+
   size = 2;
   colorMode = 0;
   colorMix = 0.5;
@@ -175,7 +179,7 @@ export class ParticleEngine {
         this.uUpdate[`uTouchVel[${i}]`] = gl.getUniformLocation(this.updateProg, `uTouchVel[${i}]`);
       }
       this.uRender = this.uniforms(this.renderProg, [
-        "uViewProj", "uSize", "uDpr", "uPointRange", "uTime", "uBreath", "uColorMode", "uColorMix", "uInvert",
+        "uViewProj", "uSize", "uDpr", "uPointRange", "uTime", "uBreath", "uColorMode", "uColorMix", "uInvert", "uDistScale", "uTheme",
       ]);
       this.bindInput();
       this.supported = true;
@@ -599,6 +603,74 @@ export class ParticleEngine {
     return { yaw: this.yaw, pitch: this.pitch };
   }
 
+  setTheme(theme: RenderTheme | number): void {
+    if (typeof theme === "number") {
+      this.theme = clamp(theme, 0, 4);
+    } else {
+      switch (theme) {
+        case "water":
+          this.theme = 1;
+          break;
+        case "glass":
+          this.theme = 2;
+          break;
+        case "cosmic":
+          this.theme = 3;
+          break;
+        case "gold":
+          this.theme = 4;
+          break;
+        case "particle":
+        default:
+          this.theme = 0;
+          break;
+      }
+    }
+  }
+
+  resetOrbit(smooth = true): void {
+    this.userZoom = 1.0;
+    if (!smooth) {
+      this.yaw = 0;
+      this.pitch = 0.04;
+      this.userOrbit = false;
+      return;
+    }
+    const startYaw = this.yaw;
+    const startPitch = this.pitch;
+    const startTime = performance.now();
+    const duration = 350;
+    const step = (now: number) => {
+      const t = Math.min(1, (now - startTime) / duration);
+      const ease = 1 - Math.pow(1 - t, 3);
+      this.yaw = startYaw * (1 - ease);
+      this.pitch = 0.04 * ease + startPitch * (1 - ease);
+      if (t < 1) {
+        requestAnimationFrame(step);
+      } else {
+        this.yaw = 0;
+        this.pitch = 0.04;
+        this.userOrbit = false;
+      }
+    };
+    requestAnimationFrame(step);
+  }
+
+  setOrbit(yaw: number, pitch: number): void {
+    this.yaw = clamp(yaw, -ORBIT_LIMIT, ORBIT_LIMIT);
+    this.pitch = clamp(pitch, -ORBIT_LIMIT, ORBIT_LIMIT);
+    this.userOrbit = true;
+    this.idleOrbit = false;
+  }
+
+  setZoom(factor: number): void {
+    this.userZoom = clamp(factor, 0.6, 2.5);
+  }
+
+  getZoom(): number {
+    return this.userZoom;
+  }
+
   private setState(s: AnimState): void {
     if (this.state === s) return;
     this.state = s;
@@ -754,13 +826,14 @@ export class ParticleEngine {
     // Scale camera distance on narrow / portrait mobile screens so particles are centered and never overflow horizontally
     const refAspect = 0.75;
     const aspectScale = aspect < refAspect ? refAspect / Math.max(0.35, aspect) : 1.0;
-    let dist = baseDist * aspectScale;
+    let dist = (baseDist * aspectScale) / this.userZoom;
 
     if (this.progCamera) {
       yaw = this.progCamera.yaw;
       pitch = this.progCamera.pitch;
-      dist = this.progCamera.distance * aspectScale;
+      dist = (this.progCamera.distance * aspectScale) / this.userZoom;
     }
+    this.currentCameraDist = dist;
 
     this.tmpEye[0] = Math.sin(yaw) * Math.cos(pitch) * dist;
     this.tmpEye[1] = Math.sin(pitch) * dist;
@@ -834,19 +907,12 @@ export class ParticleEngine {
     const n = Math.max(1000, this.drawCount);
     const size = this.size * Math.sqrt(POINT_SIZE_REF_N / n);
     
-    // Normalized device scale:
-    // Ensures particle size and perceived luminosity relative to the 3D subject
-    // are perfectly consistent across mobile phones, tablets, laptops, and desktop monitors.
-    const aspect = this.recordAspect ?? (gl.drawingBufferWidth / Math.max(1, gl.drawingBufferHeight));
-    const refAspect = 0.75;
-    const aspectScale = aspect < refAspect ? refAspect / Math.max(0.35, aspect) : 1.0;
-    const currentDist = 2.45 * aspectScale;
-    const drawingHeight = gl.drawingBufferHeight;
-    const normalizedScale = (drawingHeight / 1080) * (2.45 / Math.max(1.0, currentDist));
-
+    const baseDpr = Math.min(2.5, typeof window !== "undefined" ? (window.devicePixelRatio || 1) : 1);
+    // When recording to a fixed high-resolution buffer (e.g. 1080x1920), scale DPR so particles
+    // retain identical visual size, density, and opacity as on the interactive canvas
     const dpr = this.recordDims
-      ? (this.recordDims[1] / 1080) * 1.85
-      : Math.max(1.25, normalizedScale * 1.85);
+      ? this.recordDims[1] / Math.max(1, this.refClientHeight)
+      : baseDpr;
 
     gl.uniform1f(this.uRender.uSize, size);
     gl.uniform1f(this.uRender.uDpr, dpr);
@@ -856,6 +922,9 @@ export class ParticleEngine {
     gl.uniform1f(this.uRender.uColorMode, this.colorMode);
     gl.uniform1f(this.uRender.uColorMix, this.colorMix);
     gl.uniform1f(this.uRender.uInvert, this.invert);
+    const distScale = 2.45 / Math.max(0.1, this.currentCameraDist);
+    gl.uniform1f(this.uRender.uDistScale, distScale);
+    gl.uniform1f(this.uRender.uTheme, this.theme);
     gl.bindVertexArray(this.vaoRender[this.ping as 0 | 1]);
     gl.drawArrays(gl.POINTS, 0, n);
     gl.bindVertexArray(null);
@@ -880,6 +949,9 @@ export class ParticleEngine {
     window.addEventListener("pointerup", this.onUp);
     window.addEventListener("pointercancel", this.onUp);
     c.addEventListener("contextmenu", this.onMenu);
+    c.addEventListener("wheel", this.onWheel, { passive: false });
+    c.addEventListener("dblclick", this.onDblClick);
+    window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("deviceorientation", this.onOrient);
   }
 
@@ -890,10 +962,46 @@ export class ParticleEngine {
     window.removeEventListener("pointerup", this.onUp);
     window.removeEventListener("pointercancel", this.onUp);
     c.removeEventListener("contextmenu", this.onMenu);
+    c.removeEventListener("wheel", this.onWheel);
+    c.removeEventListener("dblclick", this.onDblClick);
+    window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("deviceorientation", this.onOrient);
   }
 
   private onMenu = (e: Event) => e.preventDefault();
+
+  private onDblClick = () => {
+    this.resetOrbit(true);
+  };
+
+  private onWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    const zoomDelta = e.deltaY * -0.0015;
+    this.userZoom = clamp(this.userZoom * (1 + zoomDelta), 0.6, 2.5);
+  };
+
+  private onKeyDown = (e: KeyboardEvent) => {
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+    if (e.key === "r" || e.key === "R") {
+      this.resetOrbit(true);
+    } else if (e.key === "ArrowLeft") {
+      this.yaw = clamp(this.yaw - 0.04, -ORBIT_LIMIT, ORBIT_LIMIT);
+      this.userOrbit = true;
+      this.idleOrbit = false;
+    } else if (e.key === "ArrowRight") {
+      this.yaw = clamp(this.yaw + 0.04, -ORBIT_LIMIT, ORBIT_LIMIT);
+      this.userOrbit = true;
+      this.idleOrbit = false;
+    } else if (e.key === "ArrowUp") {
+      this.pitch = clamp(this.pitch - 0.03, -ORBIT_LIMIT, ORBIT_LIMIT);
+      this.userOrbit = true;
+      this.idleOrbit = false;
+    } else if (e.key === "ArrowDown") {
+      this.pitch = clamp(this.pitch + 0.03, -ORBIT_LIMIT, ORBIT_LIMIT);
+      this.userOrbit = true;
+      this.idleOrbit = false;
+    }
+  };
 
   private onDown = (e: PointerEvent) => {
     if (this.eraserActive) {
@@ -913,7 +1021,8 @@ export class ParticleEngine {
       return;
     }
 
-    if (e.button === 2 || e.altKey) {
+    const isOrbit = e.button === 2 || e.button === 1 || e.altKey || e.shiftKey || e.ctrlKey;
+    if (isOrbit) {
       this.userOrbit = true;
       this.idleOrbit = false;
       this.pointers.set(-2, { x: e.clientX, y: e.clientY, t: performance.now() });
@@ -957,7 +1066,7 @@ export class ParticleEngine {
     }
 
     const orbit = this.pointers.get(-2);
-    if (orbit && (e.buttons & 2 || e.altKey)) {
+    if (orbit && (e.buttons & 2 || e.buttons & 4 || e.altKey || e.shiftKey || e.ctrlKey)) {
       this.yaw = clamp(this.yaw + (e.clientX - orbit.x) * 0.004, -ORBIT_LIMIT, ORBIT_LIMIT);
       this.pitch = clamp(this.pitch + (e.clientY - orbit.y) * 0.003, -ORBIT_LIMIT, ORBIT_LIMIT);
       orbit.x = e.clientX;

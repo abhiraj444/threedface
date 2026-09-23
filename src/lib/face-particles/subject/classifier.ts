@@ -82,50 +82,24 @@ export function classifySubject(
     const avgSat = satSum / Math.max(1, n);
     const fgRatio = fgPixels / Math.max(1, n);
 
-    // True text/drawing discrimination:
-    // Drawings/text have bimodal histograms (mostly paper white and thin dark strokes) with low tonal diversity.
-    // Natural photographs of dogs, pets, people, or nature have rich continuous midtone gradients and color diversity.
-    let midtonePixels = 0;
-    let colorVarianceSum = 0;
-    for (let i = 0; i < n; i++) {
-      const p = i * 4;
-      const r = data[p]!;
-      const g = data[p + 1]!;
-      const b = data[p + 2]!;
-      const lum = (r + g + b) / 3;
-      if (lum > 50 && lum < 205) midtonePixels++;
-      colorVarianceSum += Math.abs(r - g) + Math.abs(g - b) + Math.abs(b - r);
-    }
-    const midtoneRatio = midtonePixels / Math.max(1, n);
-    const avgColorVariance = colorVarianceSum / Math.max(1, n);
-
-    // Only route to text/graphic if it's genuinely a sketch/document/sign:
-    // Low midtones, tiny color variance, and sparse foreground on high background.
-    const isDocumentOrSketch =
-      borderAvgLum > 160 &&
-      fgRatio < 0.35 &&
-      midtoneRatio < 0.18 &&
-      avgColorVariance < 12;
-
-    if (isDocumentOrSketch) {
+    // If image has light background (white paper / canvas) with dark handwriting or strokes,
+    // or low saturation with sparse foreground (sketches, handwriting, text), route to text/graphic!
+    if (borderAvgLum > 140 && fgRatio < 0.45) {
       return "text";
     }
 
-    // High contrast pure monochrome line art on dark background
-    if (avgSat < 0.05 && avgColorVariance < 6 && fgRatio > 0.01 && fgRatio < 0.35 && midtoneRatio < 0.15) {
+    // High contrast monochrome line art or text on dark background
+    if (avgSat < 0.12 && fgRatio > 0.01 && fgRatio < 0.45) {
       return "text";
     }
 
-    // Organic photographic subjects without human face (dogs, cats, horses, pets, wildlife):
-    // Characteristics: rich midtones, organic color distribution, central foreground presence.
-    // German Shepherds, black dogs, and dark-furred pets often have lower saturation in grey/urban backgrounds
-    // but strong central photographic presence.
-    if (midtoneRatio > 0.15 || avgSat > 0.10 || fgRatio > 0.20 || avgColorVariance > 10) {
+    // Photographic color images with high saturation and dense presence:
+    if (avgSat > 0.18 && fgRatio > 0.25) {
       return "animal";
     }
   } catch {
     // Canvas read restriction fallback
   }
 
-  return "animal";
+  return "object";
 }

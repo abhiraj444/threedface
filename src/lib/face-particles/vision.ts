@@ -5,6 +5,44 @@ import {
 } from "@mediapipe/tasks-vision";
 import type { Landmark, VisionResult } from "./types";
 
+// MediaPipe Emscripten WebAssembly runtime outputs C++ diagnostics (INFO/WARNING) to stderr,
+// which browsers route to console.error/console.warn and trigger AI Studio's error overlay.
+if (typeof window !== "undefined") {
+  const origError = console.error.bind(console);
+  const origWarn = console.warn.bind(console);
+  const isMediapipeNoise = (args: unknown[]): boolean => {
+    const text = args
+      .map((a) => (typeof a === "string" ? a : (a && typeof a === "object" && "message" in a ? String((a as { message: unknown }).message) : "")))
+      .join(" ");
+    return (
+      text.includes("Created TensorFlow Lite") ||
+      text.includes("inference_feedback_manager") ||
+      text.includes("segmentation_postprocessor") ||
+      text.includes("Disabling support for feedback tensors") ||
+      text.includes("XNNPACK delegate") ||
+      text.includes("SOFTMAX activation function chosen on GPU") ||
+      /^INFO:\s+Created\s+TensorFlow/i.test(text) ||
+      /^[IWE]\d{4}\s+\d{2}:\d{2}:\d{2}/.test(text)
+    );
+  };
+
+  console.error = (...args: unknown[]) => {
+    if (isMediapipeNoise(args)) {
+      console.debug(...args);
+      return;
+    }
+    origError(...args);
+  };
+
+  console.warn = (...args: unknown[]) => {
+    if (isMediapipeNoise(args)) {
+      console.debug(...args);
+      return;
+    }
+    origWarn(...args);
+  };
+}
+
 const LOCAL_WASM_PATH = "/mediapipe/wasm";
 const CDN_WASM_PATH = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21/wasm";
 
