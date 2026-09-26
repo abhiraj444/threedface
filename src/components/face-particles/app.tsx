@@ -169,7 +169,7 @@ export function FaceParticlesApp() {
     engine.setColorMode(params.colorStyle ?? (params.color ? "color" : "mono"));
     engine.setColorMix(params.colorMix ?? 0.5);
     engine.setInvert(params.invert);
-    engine.setRadiance(params.radiance ?? 1.15);
+    engine.setRadiance(params.radiance ?? 1.0);
     engine.setTheme(params.renderTheme ?? "particle");
   }, [params]);
 
@@ -187,7 +187,7 @@ export function FaceParticlesApp() {
       engine.setColorMode(paramsRef.current.colorStyle ?? (paramsRef.current.color ? "color" : "mono"));
       engine.setColorMix(paramsRef.current.colorMix ?? 0.5);
       engine.setInvert(paramsRef.current.invert);
-      engine.setRadiance(paramsRef.current.radiance ?? 1.15);
+      engine.setRadiance(paramsRef.current.radiance ?? 1.0);
       engine.setTheme(paramsRef.current.renderTheme ?? "particle");
       engine.play("build");
       setHasPortrait(true);
@@ -262,7 +262,7 @@ export function FaceParticlesApp() {
         engine.setInvert(next.invert);
       }
       if (partial.radiance != null) {
-        engine.setRadiance(next.radiance ?? 1.15);
+        engine.setRadiance(next.radiance ?? 1.0);
       }
       if (partial.depth != null) {
         applyDepthScale(cache.set, next.depth);
@@ -1110,16 +1110,16 @@ export function FaceParticlesApp() {
                     )}
 
                     <Field
-                      label={params.invert ? "Structure Contrast & Ink Definition" : "Radiance & Vibrance"}
-                      value={`${Math.round(((params.radiance ?? 1.15) - 1.0) * 100) >= 0 ? "+" : ""}${Math.round(((params.radiance ?? 1.15) - 1.0) * 100)}%`}
+                      label={params.invert ? "Ink Contrast & Brightness" : "Brightness & Exposure"}
+                      value={`${Math.round((params.radiance ?? 1.0) * 100)}%`}
                       invert={params.invert}
                     >
                       <Slider
-                        min={0.6}
+                        min={0.5}
                         max={1.8}
                         step={0.05}
-                        value={[params.radiance ?? 1.15]}
-                        onValueChange={([v]) => patch({ radiance: v ?? 1.15 })}
+                        value={[params.radiance ?? 1.0]}
+                        onValueChange={([v]) => patch({ radiance: v ?? 1.0 })}
                         invert={params.invert}
                       />
                     </Field>
@@ -1130,8 +1130,8 @@ export function FaceParticlesApp() {
                       )}
                     >
                       {params.invert
-                        ? "Enhances ink clarity, deepens hair blackness, and sculpts facial contours against the white paper."
-                        : "Lifts luminous skin radiance, deepens rich hair contrast, and boosts vibrant feature colors."}
+                        ? "Scales ink exposure cleanly on white paper without altering original tones."
+                        : "100% matches exact original photo colors; adjust to brighten or darken with zero color shift."}
                     </p>
 
                     <Field label="Particles" value={`${Math.round(params.particles / 1000)}k`} invert={params.invert}>

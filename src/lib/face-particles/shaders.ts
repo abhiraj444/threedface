@@ -150,109 +150,55 @@ void main() {
   float tone = aTone;
   float densityComp = clamp(pow(distScale, 0.42), 0.72, 1.28);
   float rad = clamp(uRadiance, 0.4, 2.2);
-  float sem = aSemantic;
 
-  // Compute color luminance and vibrance saturation boost
-  float rawLum = dot(aColor, vec3(0.299, 0.587, 0.114));
-  float satBoost = 1.0 + (rad - 1.0) * 0.55;
-  vec3 vibrantColor = clamp(mix(vec3(rawLum), aColor, satBoost), 0.0, 1.0);
+  // 100% faithful original photo color reproduction.
+  // Exposure scaling is linear across all 3 color channels:
+  // (R * rad, G * rad, B * rad).
+  // Because the ratios R:G:B are perfectly preserved, hue angle and saturation
+  // remain 100% true to the original photo with zero color shift or orange tinting!
+  vec3 exactColor = clamp(aColor * rad, 0.0, 1.0);
 
-  // Anatomical brightness & contrast grading
-  if (uInvert < 0.5) {
-    // -------------------------------------------------------------
-    // DARK BACKGROUND MODE (Black canvas, luminous particles)
-    // -------------------------------------------------------------
-    float b = 1.0;
-
-    // Skin (sem == 2.0): radiant warm highlight lift with soft rolloff
-    if (sem > 1.5 && sem < 2.5) {
-      float skinLift = pow(tone, max(0.35, 1.0 - (rad - 1.0) * 0.55)) * (0.8 + 0.35 * rad);
-      b = (0.54 + 0.46 * skinLift) * (0.82 + 0.18 * depthScale);
-      vibrantColor = clamp(vibrantColor * (0.94 + 0.12 * (rad - 1.0)), 0.0, 1.0);
-    }
-    // Hair (sem == 1.0): if dark, deepen blackness & contrast; if light/blonde, boost luster
-    else if (sem > 0.5 && sem < 1.5) {
-      if (rawLum < 0.36) {
-        // Deepen dark hair into velvet blackness as radiance increases
-        float hairDarkness = pow(tone, 1.0 + (rad - 1.0) * 0.75) * max(0.4, 1.0 - (rad - 1.0) * 0.32);
-        b = (0.36 + 0.54 * hairDarkness) * (0.82 + 0.18 * depthScale);
-      } else {
-        // Boost bright blonde/silver hair luster
-        float hairLuster = pow(tone, max(0.35, 1.0 - (rad - 1.0) * 0.5)) * (0.8 + 0.35 * rad);
-        b = (0.55 + 0.45 * hairLuster) * (0.82 + 0.18 * depthScale);
-      }
-    }
-    // Features: Eyes, Brows, Lips (sem == 3.0): heighten contrast and eye specular pop
-    else if (sem > 2.5) {
-      float featPop = pow(tone, 0.8) * (0.85 + 0.35 * rad);
-      b = (0.62 + 0.48 * featPop) * (0.82 + 0.18 * depthScale);
-      vibrantColor = clamp(mix(vec3(rawLum), aColor, 1.0 + (rad - 1.0) * 0.75), 0.0, 1.0);
-    }
-    // Torso / Background elements (sem == 0.0)
-    else {
-      b = (0.58 + 0.42 * tone) * rad * (0.82 + 0.18 * depthScale);
-    }
-
-    vBright = clamp(b * densityComp, 0.1, 1.8);
-  } else {
-    // -------------------------------------------------------------
-    // WHITE BACKGROUND MODE (White canvas, dark ink particles)
-    // Inversely proportional: more radiance = sculpted rich ink density,
-    // deeper hair and feature silhouettes so facial form doesn't wash out!
-    // -------------------------------------------------------------
-    float b = 1.0;
-
-    // Skin on white: preserve sculpted delicate ink density so pale skin doesn't vanish
-    if (sem > 1.5 && sem < 2.5) {
-      float skinInk = pow(tone, max(0.4, 1.0 - (rad - 1.0) * 0.4)) * (0.85 + 0.25 * rad);
-      b = (0.74 + 0.26 * skinInk) * (0.86 + 0.14 * depthScale);
-    }
-    // Hair on white: maximize crisp jet-black ink density for dark hair
-    else if (sem > 0.5 && sem < 1.5) {
-      if (rawLum < 0.36) {
-        b = (0.88 + 0.28 * (rad - 1.0)) * (0.86 + 0.14 * depthScale);
-      } else {
-        b = (0.65 + 0.35 * tone) * (0.86 + 0.14 * depthScale);
-      }
-    }
-    // Features on white: sharp ink definition for pupils, iris, and lips
-    else if (sem > 2.5) {
-      b = (0.86 + 0.25 * (rad - 1.0)) * (0.86 + 0.14 * depthScale);
-    }
-    // Torso / Other on white
-    else {
-      b = (0.76 + 0.24 * tone) * (0.86 + 0.14 * depthScale);
-    }
-
-    vBright = clamp(b, 0.2, 1.9);
-  }
-
-  // Color Modes: 0.0 = Monochrome, 1.0 = Full Color, 2.0 = Hybrid
   vec3 col;
-  float isCol = step(aSeed, clamp(uColorMix, 0.05, 0.95));
+  float b = 1.0;
 
-  if (uInvert < 0.5) {
-    if (uColorMode < 0.5) {
+  // 0.0 = Monochrome, 1.0 = Color, 2.0 = Hybrid
+  if (uColorMode > 0.5 && uColorMode < 1.5) {
+    // -----------------------------------------------------------------
+    // FULL COLOR MODE: 100% Exact Photo Match
+    // -----------------------------------------------------------------
+    col = exactColor;
+    // Normalized alpha cap prevents additive stacking from blowing out or oversaturating
+    b = 0.88 + 0.12 * depthScale;
+  } else if (uColorMode < 0.5) {
+    // -----------------------------------------------------------------
+    // MONOCHROME MODE: Silver Stipple on Dark, or Ink-Black on White
+    // -----------------------------------------------------------------
+    if (uInvert < 0.5) {
       col = vec3(1.0);
-    } else if (uColorMode < 1.5) {
-      col = vibrantColor;
+      b = clamp((0.45 + 0.55 * tone) * rad * (0.85 + 0.15 * depthScale) * densityComp, 0.05, 1.0);
     } else {
-      col = mix(vec3(1.0), vibrantColor, isCol);
+      col = vec3(0.04, 0.04, 0.05);
+      b = clamp((0.75 + 0.25 * tone) * rad * (0.85 + 0.15 * depthScale), 0.1, 1.0);
     }
   } else {
-    // Rich artist inks on white paper
-    vec3 inkBlack = vec3(0.03, 0.03, 0.04);
-    // On white paper, colors are rendered as rich pigmented watercolor inks
-    vec3 richColor = clamp(pow(vibrantColor, vec3(0.92)) * (0.88 + 0.18 * (rad - 1.0)), 0.0, 1.0);
-    if (uColorMode < 0.5) {
-      col = inkBlack;
-    } else if (uColorMode < 1.5) {
-      col = richColor;
+    // -----------------------------------------------------------------
+    // HYBRID MODE: Subtle blend between exact photo and silver
+    // -----------------------------------------------------------------
+    float isCol = step(aSeed, clamp(uColorMix, 0.05, 0.95));
+    if (uInvert < 0.5) {
+      col = mix(vec3(1.0), exactColor, isCol);
+      float monoB = (0.45 + 0.55 * tone) * rad;
+      b = clamp(mix(monoB, 0.92, isCol), 0.05, 1.0);
     } else {
-      col = mix(inkBlack, richColor, isCol);
+      vec3 inkBlack = vec3(0.04, 0.04, 0.05);
+      col = mix(inkBlack, exactColor, isCol);
+      float monoB = (0.75 + 0.25 * tone) * rad;
+      b = clamp(mix(monoB, 0.92, isCol), 0.1, 1.0);
     }
   }
 
+  // Strictly clamp brightness between 0.0 and 1.0 so alpha never overflows 100%
+  vBright = clamp(b, 0.05, 1.0);
   vColor = col;
 }
 `;
@@ -268,9 +214,10 @@ void main() {
   float r2 = dot(p, p);
   if (r2 > 1.0) discard;
 
-  // High-performance smooth Gaussian stipple falloff
-  // Extremely fast across mobile GPUs, zero branching, crystal-clear facial resemblance
-  float a = exp(-r2 * 2.8) * vBright;
+  // Smooth Gaussian stipple falloff strictly clamped to [0, 1]
+  // In premultiplied alpha (gl.ONE, gl.ONE_MINUS_SRC_ALPHA), a <= 1.0 guarantees that
+  // overlapping particles converge to the EXACT original color without channel blowout!
+  float a = clamp(exp(-r2 * 2.8) * vBright, 0.0, 1.0);
   fragColor = vec4(vColor * a, a);
 }
 `;

@@ -25,7 +25,7 @@ export const DEFAULT_PARAMS: Params = {
   invert: false,
   straighten: true,
   removeBg: true,
-  radiance: 1.15,
+  radiance: 1.0,
   motionSensor: false, // Disabled by default per user request; device tilt won't shake portrait
   slowSway: true, // Smooth continuous left-to-right gentle sway
   renderTheme: "particle",
