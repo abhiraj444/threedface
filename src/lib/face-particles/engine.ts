@@ -69,6 +69,7 @@ export class ParticleEngine {
   private seedBuf: WebGLBuffer | null = null;
   private toneBuf: WebGLBuffer | null = null;
   private colorBuf: WebGLBuffer | null = null;
+  private semanticBuf: WebGLBuffer | null = null;
   private vaoUpdate: [WebGLVertexArrayObject, WebGLVertexArrayObject] | null = null;
   private vaoRender: [WebGLVertexArrayObject, WebGLVertexArrayObject] | null = null;
   private tf: [WebGLTransformFeedback, WebGLTransformFeedback] | null = null;
@@ -92,7 +93,7 @@ export class ParticleEngine {
   private gyroYaw = 0;
   private gyroPitch = 0;
   private idleOrbit = true;
-  private userOrbit = false;
+  userOrbit = false;
   private motionSensorEnabled = false;
   private slowSwayEnabled = true;
 
@@ -104,6 +105,7 @@ export class ParticleEngine {
   colorMode = 0;
   colorMix = 0.5;
   invert = 0;
+  radiance = 1.15;
   assemble = 0;
   targetAssemble = 1;
   spring = 14;
@@ -129,6 +131,9 @@ export class ParticleEngine {
   private view = createMat4();
   private tmpEye: [number, number, number] = [0, 0, 2.3];
   private progCamera: { yaw: number; pitch: number; distance: number } | null = null;
+  private resizeObserver: ResizeObserver | null = null;
+  private needsResize = true;
+  private lastPinchDist = 0;
 
   eraserActive = false;
   eraserSubmode: "brush" | "orbit" = "brush";
@@ -179,9 +184,17 @@ export class ParticleEngine {
         this.uUpdate[`uTouchVel[${i}]`] = gl.getUniformLocation(this.updateProg, `uTouchVel[${i}]`);
       }
       this.uRender = this.uniforms(this.renderProg, [
-        "uViewProj", "uSize", "uDpr", "uPointRange", "uTime", "uBreath", "uColorMode", "uColorMix", "uInvert", "uDistScale", "uTheme",
+        "uViewProj", "uSize", "uDpr", "uPointRange", "uTime", "uBreath", "uColorMode", "uColorMix", "uInvert", "uDistScale", "uRadiance",
       ]);
       this.bindInput();
+
+      if (typeof ResizeObserver !== "undefined") {
+        this.resizeObserver = new ResizeObserver(() => {
+          this.needsResize = true;
+        });
+        this.resizeObserver.observe(this.canvas);
+      }
+
       this.supported = true;
     } catch (err) {
       console.warn("[ParticleEngine] WebGL2 program initialization failed:", err);
@@ -225,12 +238,14 @@ export class ParticleEngine {
   dispose(): void {
     this.stop();
     this.unbindInput();
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
     const gl = this.gl;
     if (!gl) return;
     const delBuf = (b: WebGLBuffer | null) => b && gl.deleteBuffer(b);
     if (this.posBuf) { delBuf(this.posBuf[0]); delBuf(this.posBuf[1]); }
     if (this.velBuf) { delBuf(this.velBuf[0]); delBuf(this.velBuf[1]); }
-    delBuf(this.homeBuf); delBuf(this.seedBuf); delBuf(this.toneBuf); delBuf(this.colorBuf);
+    delBuf(this.homeBuf); delBuf(this.seedBuf); delBuf(this.toneBuf); delBuf(this.colorBuf); delBuf(this.semanticBuf);
     if (this.updateProg) gl.deleteProgram(this.updateProg);
     if (this.renderProg) gl.deleteProgram(this.renderProg);
   }
@@ -279,10 +294,12 @@ export class ParticleEngine {
     if (this.seedBuf) gl.deleteBuffer(this.seedBuf);
     if (this.toneBuf) gl.deleteBuffer(this.toneBuf);
     if (this.colorBuf) gl.deleteBuffer(this.colorBuf);
+    if (this.semanticBuf) gl.deleteBuffer(this.semanticBuf);
     this.homeBuf = buf(set.home);
     this.seedBuf = buf(set.seed);
     this.toneBuf = buf(set.tone);
     this.colorBuf = buf(set.color);
+    this.semanticBuf = buf(set.semantic ?? new Uint8Array(set.count));
 
     const makeUpdateVao = (read: 0 | 1) => {
       const vao = gl.createVertexArray()!;
@@ -317,6 +334,11 @@ export class ParticleEngine {
       gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuf);
       gl.enableVertexAttribArray(3);
       gl.vertexAttribPointer(3, 3, gl.UNSIGNED_BYTE, true, 0, 0);
+      if (this.semanticBuf) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.semanticBuf);
+        gl.enableVertexAttribArray(4);
+        gl.vertexAttribPointer(4, 1, gl.UNSIGNED_BYTE, false, 0, 0);
+      }
       gl.bindVertexArray(null);
       return vao;
     };
@@ -372,6 +394,10 @@ export class ParticleEngine {
 
   setInvert(on: boolean): void {
     this.invert = on ? 1 : 0;
+  }
+
+  setRadiance(r: number): void {
+    this.radiance = clamp(r, 0.4, 2.2);
   }
 
   updateHomeZ(set: ParticleSet): void {
@@ -603,29 +629,8 @@ export class ParticleEngine {
     return { yaw: this.yaw, pitch: this.pitch };
   }
 
-  setTheme(theme: RenderTheme | number): void {
-    if (typeof theme === "number") {
-      this.theme = clamp(theme, 0, 4);
-    } else {
-      switch (theme) {
-        case "water":
-          this.theme = 1;
-          break;
-        case "glass":
-          this.theme = 2;
-          break;
-        case "cosmic":
-          this.theme = 3;
-          break;
-        case "gold":
-          this.theme = 4;
-          break;
-        case "particle":
-        default:
-          this.theme = 0;
-          break;
-      }
-    }
+  setTheme(_theme: RenderTheme | number): void {
+    // Retained for contract compatibility - pure Gaussian particle stipple is used
   }
 
   resetOrbit(smooth = true): void {
@@ -791,9 +796,12 @@ export class ParticleEngine {
       gl.viewport(0, 0, w, h);
       return;
     }
-    const dpr = Math.min(2.5, typeof window !== "undefined" ? (window.devicePixelRatio || 1) : 1);
-    const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
-    const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
+    // High-performance mobile DPR cap (1.5x) eliminates mobile GPU fill-rate throttling
+    const dpr = Math.min(1.5, typeof window !== "undefined" ? (window.devicePixelRatio || 1) : 1);
+    const clientW = canvas.clientWidth || 360;
+    const clientH = canvas.clientHeight || 640;
+    const w = Math.max(1, Math.round(clientW * dpr));
+    const h = Math.max(1, Math.round(clientH * dpr));
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width = w;
       canvas.height = h;
@@ -894,7 +902,10 @@ export class ParticleEngine {
   private render(): void {
     const gl = this.gl;
     if (!gl || !this.renderProg || !this.vaoRender) return;
-    this.resize();
+    if (this.needsResize || this.recordDims) {
+      this.resize();
+      this.needsResize = false;
+    }
     this.camera();
     if (this.invert) gl.clearColor(1.0, 1.0, 1.0, 1.0);
     else gl.clearColor(0.027, 0.027, 0.031, 1);
@@ -907,7 +918,7 @@ export class ParticleEngine {
     const n = Math.max(1000, this.drawCount);
     const size = this.size * Math.sqrt(POINT_SIZE_REF_N / n);
     
-    const baseDpr = Math.min(2.5, typeof window !== "undefined" ? (window.devicePixelRatio || 1) : 1);
+    const baseDpr = Math.min(1.5, typeof window !== "undefined" ? (window.devicePixelRatio || 1) : 1);
     // When recording to a fixed high-resolution buffer (e.g. 1080x1920), scale DPR so particles
     // retain identical visual size, density, and opacity as on the interactive canvas
     const dpr = this.recordDims
@@ -924,7 +935,7 @@ export class ParticleEngine {
     gl.uniform1f(this.uRender.uInvert, this.invert);
     const distScale = 2.45 / Math.max(0.1, this.currentCameraDist);
     gl.uniform1f(this.uRender.uDistScale, distScale);
-    gl.uniform1f(this.uRender.uTheme, this.theme);
+    gl.uniform1f(this.uRender.uRadiance, this.radiance);
     gl.bindVertexArray(this.vaoRender[this.ping as 0 | 1]);
     gl.drawArrays(gl.POINTS, 0, n);
     gl.bindVertexArray(null);
@@ -1021,24 +1032,22 @@ export class ParticleEngine {
       return;
     }
 
-    const isOrbit = e.button === 2 || e.button === 1 || e.altKey || e.shiftKey || e.ctrlKey;
-    if (isOrbit) {
-      this.userOrbit = true;
-      this.idleOrbit = false;
-      this.pointers.set(-2, { x: e.clientX, y: e.clientY, t: performance.now() });
-      return;
-    }
     this.canvas.setPointerCapture(e.pointerId);
     const now = performance.now();
+
+    // Double tap triggers instant reset to frontal orientation
     if (now - this.lastTap < 280 && this.pointers.size === 0) {
-      const [x, y] = this.worldFromClient(e.clientX, e.clientY);
-      this.effectOrigin = [x, y];
-      this.play("ripple");
+      this.resetOrbit(true);
       this.lastTap = 0;
       return;
     }
     this.lastTap = now;
+
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, t: now });
+    if (this.pointers.size === 2) {
+      const pts = [...this.pointers.values()];
+      this.lastPinchDist = Math.hypot(pts[0]!.x - pts[1]!.x, pts[0]!.y - pts[1]!.y);
+    }
     this.syncTouches();
   };
 
@@ -1047,8 +1056,8 @@ export class ParticleEngine {
       if (this.eraserSubmode === "orbit") {
         const orbit = this.pointers.get(-2);
         if (orbit) {
-          this.yaw = clamp(this.yaw + (e.clientX - orbit.x) * 0.004, -ORBIT_LIMIT, ORBIT_LIMIT);
-          this.pitch = clamp(this.pitch + (e.clientY - orbit.y) * 0.003, -ORBIT_LIMIT, ORBIT_LIMIT);
+          this.yaw = clamp(this.yaw + (e.clientX - orbit.x) * 0.005, -ORBIT_LIMIT, ORBIT_LIMIT);
+          this.pitch = clamp(this.pitch + (e.clientY - orbit.y) * 0.004, -ORBIT_LIMIT, ORBIT_LIMIT);
           orbit.x = e.clientX;
           orbit.y = e.clientY;
         }
@@ -1065,29 +1074,32 @@ export class ParticleEngine {
       return;
     }
 
-    const orbit = this.pointers.get(-2);
-    if (orbit && (e.buttons & 2 || e.buttons & 4 || e.altKey || e.shiftKey || e.ctrlKey)) {
-      this.yaw = clamp(this.yaw + (e.clientX - orbit.x) * 0.004, -ORBIT_LIMIT, ORBIT_LIMIT);
-      this.pitch = clamp(this.pitch + (e.clientY - orbit.y) * 0.003, -ORBIT_LIMIT, ORBIT_LIMIT);
-      orbit.x = e.clientX;
-      orbit.y = e.clientY;
-      return;
-    }
+    const p = this.pointers.get(e.pointerId);
+    if (!p) return;
+
+    // Two-finger pinch-zoom
     if (this.pointers.size >= 2) {
+      p.x = e.clientX;
+      p.y = e.clientY;
       const pts = [...this.pointers.values()];
       if (pts.length >= 2) {
-        const a = pts[0]!;
-        this.yaw = clamp(this.yaw + (e.movementX) * 0.003, -ORBIT_LIMIT, ORBIT_LIMIT);
-        this.pitch = clamp(this.pitch + (e.movementY) * 0.0025, -ORBIT_LIMIT, ORBIT_LIMIT);
-        this.userOrbit = true;
-        this.idleOrbit = false;
-        a.x = e.clientX;
-        a.y = e.clientY;
+        const currentDist = Math.hypot(pts[0]!.x - pts[1]!.x, pts[0]!.y - pts[1]!.y);
+        if (this.lastPinchDist > 0 && currentDist > 0) {
+          const deltaScale = currentDist / this.lastPinchDist;
+          this.userZoom = clamp(this.userZoom * deltaScale, 0.6, 2.5);
+        }
+        this.lastPinchDist = currentDist;
       }
       return;
     }
-    const p = this.pointers.get(e.pointerId);
-    if (!p) return;
+
+    // Single-finger: Smooth 3D Orbit
+    const dx = e.clientX - p.x;
+    const dy = e.clientY - p.y;
+    this.yaw = clamp(this.yaw + dx * 0.0045, -ORBIT_LIMIT, ORBIT_LIMIT);
+    this.pitch = clamp(this.pitch + dy * 0.0035, -ORBIT_LIMIT, ORBIT_LIMIT);
+    this.userOrbit = true;
+    this.idleOrbit = false;
     p.x = e.clientX;
     p.y = e.clientY;
     this.syncTouches();
@@ -1104,6 +1116,9 @@ export class ParticleEngine {
     }
     this.pointers.delete(e.pointerId);
     this.pointers.delete(-2);
+    if (this.pointers.size < 2) {
+      this.lastPinchDist = 0;
+    }
     this.syncTouches();
   };
 

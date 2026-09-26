@@ -16,6 +16,7 @@ export interface Params {
   invert: boolean;
   straighten: boolean;
   removeBg: boolean;
+  radiance?: number;
   motionSensor?: boolean;
   slowSway?: boolean;
   renderTheme?: RenderTheme;
@@ -28,6 +29,7 @@ export interface ParticleSet {
   tone: Uint8Array;
   seed: Float32Array;
   color: Uint8Array;
+  semantic?: Uint8Array;
 }
 
 export interface Landmark {

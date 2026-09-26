@@ -52,8 +52,10 @@ export function sample(
   const toneOut = new Uint8Array(count);
   const seed = new Float32Array(count);
   const color = new Uint8Array(count * 3);
+  const semantic = new Uint8Array(count);
   const px = crop.imageData.data;
   const aspect = h / w;
+  const srcSemantics = maps.semantics;
 
   for (let i = 0; i < count; i++) {
     const pass = n > 0 ? (i / n) | 0 : 0;
@@ -76,9 +78,10 @@ export function sample(
     color[i * 3] = px[p]!;
     color[i * 3 + 1] = px[p + 1]!;
     color[i * 3 + 2] = px[p + 2]!;
+    semantic[i] = srcSemantics ? srcSemantics[pi]! : 0;
   }
 
-  return { count, home, restZ, tone: toneOut, seed, color };
+  return { count, home, restZ, tone: toneOut, seed, color, semantic };
 }
 
 function clampByte(v: number): number {
@@ -91,6 +94,7 @@ export function makeCloud(count = 40_000): ParticleSet {
   const tone = new Uint8Array(count);
   const seed = new Float32Array(count);
   const color = new Uint8Array(count * 3);
+  const semantic = new Uint8Array(count);
   for (let i = 0; i < count; i++) {
     const u = hash21(i, 1.2);
     const v = hash21(i, 7.7);
@@ -108,7 +112,7 @@ export function makeCloud(count = 40_000): ParticleSet {
     color[i * 3 + 1] = g;
     color[i * 3 + 2] = g;
   }
-  return { count, home, restZ, tone, seed, color };
+  return { count, home, restZ, tone, seed, color, semantic };
 }
 
 export function applyDepthScale(set: ParticleSet, depth: number): void {

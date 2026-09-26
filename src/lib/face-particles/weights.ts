@@ -8,6 +8,7 @@ export interface WeightMaps {
   tone: Float32Array;
   width: number;
   height: number;
+  semantics?: Uint8Array;
 }
 
 function gaussianKernel(sigma: number): Float32Array {
@@ -205,5 +206,18 @@ export function buildWeights(crop: CropResult, params: Params): WeightMaps {
     weight[i] = wv;
   }
 
-  return { weight, tone, width: w, height: h };
+  const semantics = new Uint8Array(w * h);
+  for (let i = 0; i < semantics.length; i++) {
+    if (L[i]! > 0.15) {
+      semantics[i] = 3; // Feature: eyes, brows, lips, irises
+    } else if ((faceSkin[i] ?? 0) > 0.45) {
+      semantics[i] = 2; // Facial skin / complexion
+    } else if ((hairSkin[i] ?? 0) > 0.45) {
+      semantics[i] = 1; // Hair
+    } else {
+      semantics[i] = 0; // Other / torso / clothing
+    }
+  }
+
+  return { weight, tone, width: w, height: h, semantics };
 }

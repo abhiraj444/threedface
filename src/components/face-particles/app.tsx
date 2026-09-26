@@ -4,13 +4,10 @@ import {
   Camera,
   Contrast,
   Download,
-  Droplets,
   Eraser,
   FlipHorizontal2,
-  Gem,
   ImagePlus,
   Loader2,
-  Orbit,
   Printer,
   RotateCcw,
   ScanFace,
@@ -172,6 +169,7 @@ export function FaceParticlesApp() {
     engine.setColorMode(params.colorStyle ?? (params.color ? "color" : "mono"));
     engine.setColorMix(params.colorMix ?? 0.5);
     engine.setInvert(params.invert);
+    engine.setRadiance(params.radiance ?? 1.15);
     engine.setTheme(params.renderTheme ?? "particle");
   }, [params]);
 
@@ -189,6 +187,7 @@ export function FaceParticlesApp() {
       engine.setColorMode(paramsRef.current.colorStyle ?? (paramsRef.current.color ? "color" : "mono"));
       engine.setColorMix(paramsRef.current.colorMix ?? 0.5);
       engine.setInvert(paramsRef.current.invert);
+      engine.setRadiance(paramsRef.current.radiance ?? 1.15);
       engine.setTheme(paramsRef.current.renderTheme ?? "particle");
       engine.play("build");
       setHasPortrait(true);
@@ -261,6 +260,9 @@ export function FaceParticlesApp() {
       if (partial.colorMix != null) engine.setColorMix(next.colorMix);
       if (partial.invert != null) {
         engine.setInvert(next.invert);
+      }
+      if (partial.radiance != null) {
+        engine.setRadiance(next.radiance ?? 1.15);
       }
       if (partial.depth != null) {
         applyDepthScale(cache.set, next.depth);
@@ -1073,73 +1075,6 @@ export function FaceParticlesApp() {
                       })}
                     </div>
 
-                    {/* 3D Structure Aesthetic Theme */}
-                    <div className="flex flex-col gap-1.5 mt-1">
-                      <span
-                        className={cn(
-                          "text-xs font-medium uppercase tracking-[0.14em]",
-                          params.invert ? "text-neutral-500" : "text-fg-subtle",
-                        )}
-                      >
-                        Aesthetic Material Theme
-                      </span>
-                      <div
-                        className={cn(
-                          "grid grid-cols-2 sm:grid-cols-3 gap-1 rounded-xl border p-1",
-                          params.invert
-                            ? "border-neutral-200 bg-neutral-100"
-                            : "border-border bg-bg-subtle",
-                        )}
-                      >
-                        {(
-                          [
-                            ["particle", "Particle Cloud", "Soft stipple", <Sparkles key="p" className="size-3.5" />],
-                            ["water", "Liquid Dewdrops", "Water droplets", <Droplets key="w" className="size-3.5" />],
-                            ["glass", "Prismatic Glass", "Crystal diamond", <Gem key="g" className="size-3.5" />],
-                            ["cosmic", "Cosmic Starlight", "Diffraction spikes", <Orbit key="c" className="size-3.5" />],
-                            ["gold", "Molten Gold", "Burnished bronze", <Sparkles key="m" className="size-3.5" />],
-                          ] as const
-                        ).map(([themeKey, label, sub, icon]) => {
-                          const currentTheme = params.renderTheme ?? "particle";
-                          const active = currentTheme === themeKey;
-                          return (
-                            <button
-                              key={themeKey}
-                              type="button"
-                              onClick={() => {
-                                patch({ renderTheme: themeKey });
-                                setNotification(`Switched theme to ${label}`);
-                                window.setTimeout(() => setNotification(null), 2000);
-                              }}
-                              className={cn(
-                                "flex flex-col items-start rounded-lg p-2 text-left transition-all",
-                                active
-                                  ? params.invert
-                                    ? "bg-white text-neutral-950 shadow-sm font-semibold border border-neutral-300"
-                                    : "bg-bg-elevated text-fg shadow-sm font-semibold border border-border/80"
-                                  : params.invert
-                                    ? "text-neutral-600 hover:bg-white/60 hover:text-neutral-900"
-                                    : "text-fg-muted hover:bg-bg/50 hover:text-fg",
-                              )}
-                            >
-                              <div className="flex items-center gap-1.5">
-                                <span className={active ? "text-accent" : "text-fg-subtle"}>{icon}</span>
-                                <span className="text-xs">{label}</span>
-                              </div>
-                              <span
-                                className={cn(
-                                  "text-[10px] tracking-tight mt-0.5",
-                                  params.invert ? "text-neutral-500" : "text-fg-subtle",
-                                )}
-                              >
-                                {sub}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
                     {(params.colorStyle ?? (params.color ? "color" : "mono")) === "hybrid" && (
                       <div
                         className={cn(
@@ -1150,8 +1085,8 @@ export function FaceParticlesApp() {
                         )}
                       >
                         <Field
-                          label="Hybrid Color Ratio (Derived from Face)"
-                          value={`${Math.round((params.colorMix ?? 0.5) * 100)}% Color · ${Math.round((1 - (params.colorMix ?? 0.5)) * 100)}% B&W`}
+                          label="Hybrid Color Ratio (Photographic vs Silver)"
+                          value={`${Math.round((params.colorMix ?? 0.5) * 100)}% Color · ${Math.round((1 - (params.colorMix ?? 0.5)) * 100)}% Silver`}
                           invert={params.invert}
                         >
                           <Slider
@@ -1169,16 +1104,41 @@ export function FaceParticlesApp() {
                             params.invert ? "text-neutral-500" : "text-fg-subtle",
                           )}
                         >
-                          Interweaves photorealistic colors from the face with silver monochrome particles.
+                          Seamlessly blends photographic skin and facial colors with silver monochrome particles.
                         </p>
                       </div>
                     )}
 
+                    <Field
+                      label={params.invert ? "Structure Contrast & Ink Definition" : "Radiance & Vibrance"}
+                      value={`${Math.round(((params.radiance ?? 1.15) - 1.0) * 100) >= 0 ? "+" : ""}${Math.round(((params.radiance ?? 1.15) - 1.0) * 100)}%`}
+                      invert={params.invert}
+                    >
+                      <Slider
+                        min={0.6}
+                        max={1.8}
+                        step={0.05}
+                        value={[params.radiance ?? 1.15]}
+                        onValueChange={([v]) => patch({ radiance: v ?? 1.15 })}
+                        invert={params.invert}
+                      />
+                    </Field>
+                    <p
+                      className={cn(
+                        "-mt-1 text-[11px] leading-relaxed",
+                        params.invert ? "text-neutral-500" : "text-fg-subtle",
+                      )}
+                    >
+                      {params.invert
+                        ? "Enhances ink clarity, deepens hair blackness, and sculpts facial contours against the white paper."
+                        : "Lifts luminous skin radiance, deepens rich hair contrast, and boosts vibrant feature colors."}
+                    </p>
+
                     <Field label="Particles" value={`${Math.round(params.particles / 1000)}k`} invert={params.invert}>
                       <Slider
-                        min={5000}
-                        max={100000}
-                        step={1000}
+                        min={10000}
+                        max={60000}
+                        step={2000}
                         value={[params.particles]}
                         onValueChange={([v]) => patch({ particles: v ?? params.particles })}
                         invert={params.invert}
@@ -1186,8 +1146,8 @@ export function FaceParticlesApp() {
                     </Field>
                     <Field label="Point Size" value={params.size.toFixed(1)} invert={params.invert}>
                       <Slider
-                        min={0.8}
-                        max={4}
+                        min={1.2}
+                        max={3.5}
                         step={0.1}
                         value={[params.size]}
                         onValueChange={([v]) => patch({ size: v ?? params.size })}
@@ -1458,7 +1418,7 @@ export function FaceParticlesApp() {
                         </span>
                         <Button
                           size="sm"
-                          variant="outline"
+                          variant="secondary"
                           onClick={() => {
                             engineRef.current?.resetOrbit(true);
                             setNotification("Aligned to straight front");

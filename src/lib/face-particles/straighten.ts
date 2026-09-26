@@ -81,7 +81,7 @@ export async function straightenFace(
   // Pass C: Fast mathematical landmark & segmentation transform (<2ms latency, zero redundant inference)
   const cosA = Math.cos(-angleRad);
   const sinA = Math.sin(-angleRad);
-  const rotatedLandmarks: Landmark[] = vision.landmarks.map((p) => {
+  const rotatedLandmarks: Landmark[] = lm.map((p) => {
     const rx = p.x * srcW - rotCx;
     const ry = p.y * srcH - rotCy;
     const nx = rx * cosA - ry * sinA + newW / 2;
@@ -147,6 +147,9 @@ export async function straightenFace(
       classes: rotatedClasses,
       classW,
       classH,
+      sourceW: newW,
+      sourceH: newH,
+      degraded: vision.degraded,
     },
     rollDeg,
     didStraighten: true,

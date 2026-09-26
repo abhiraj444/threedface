@@ -14,50 +14,24 @@ uniform vec2 uEffectOrigin;
 out vec3 vPos;
 out vec3 vVel;
 
-float hash(vec3 p) {
-  p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
-  p *= 17.0;
-  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
-}
-
-float vnoise(vec3 x) {
-  vec3 i = floor(x);
-  vec3 f = fract(x);
-  f = f * f * (3.0 - 2.0 * f);
-  float n000 = hash(i);
-  float n100 = hash(i + vec3(1.0, 0.0, 0.0));
-  float n010 = hash(i + vec3(0.0, 1.0, 0.0));
-  float n110 = hash(i + vec3(1.0, 1.0, 0.0));
-  float n001 = hash(i + vec3(0.0, 0.0, 1.0));
-  float n101 = hash(i + vec3(1.0, 0.0, 1.0));
-  float n011 = hash(i + vec3(0.0, 1.0, 1.0));
-  float n111 = hash(i + vec3(1.0, 1.0, 1.0));
-  float nx00 = mix(n000, n100, f.x);
-  float nx10 = mix(n010, n110, f.x);
-  float nx01 = mix(n001, n101, f.x);
-  float nx11 = mix(n011, n111, f.x);
-  float nxy0 = mix(nx00, nx10, f.y);
-  float nxy1 = mix(nx01, nx11, f.y);
-  return mix(nxy0, nxy1, f.z);
-}
-
-vec3 curlNoise(vec3 p) {
-  float n1 = vnoise(p);
-  float n2 = vnoise(p + vec3(17.1, 31.7, 9.4));
-  float n3 = vnoise(p + vec3(5.2, 41.3, 23.8));
-  return vec3(n2 - 0.5, n3 - 0.5, n1 - 0.5);
+// Fast harmonic 3D organic turbulence (approx. divergence-free, zero texture/hash stall)
+vec3 fastTurbulence(vec3 p, float t) {
+  vec3 p1 = p * 1.8 + vec3(t * 0.15, t * 0.12, t * 0.08);
+  return vec3(
+    sin(p1.y * 2.3 + p1.z * 1.7) * cos(p1.x * 1.4),
+    cos(p1.z * 2.1 + p1.x * 1.9) * sin(p1.y * 1.5),
+    sin(p1.x * 2.0 + p1.y * 2.4) * cos(p1.z * 1.6)
+  ) * 0.42;
 }
 
 void main() {
   vec3 f = vec3(0.0);
 
-  // Mode 5: Celestial Fill / Stream
-  // Particles cascade down in individual fluid streams with staggered arrival and settle layer-by-layer
+  // Mode 5: Celestial Fill / Stream (Cascade down and settle layer-by-layer)
   if (uMode > 4.5) {
     float stagger = aSeed * 0.28;
     float reach = smoothstep(uEffectT - 0.16 + stagger, uEffectT + 0.10 + stagger, aHome.y);
     vec3 springForce = (aHome - aPos) * (uSpring * 1.85);
-    // Dispersed stream with individual lateral drift and vertical descent velocity
     float sway = sin(uTime * 4.5 + aSeed * 32.0) * 0.25;
     float streamZ = (aHome.z - aPos.z) * 4.5;
     vec3 streamForce = vec3(
@@ -67,7 +41,7 @@ void main() {
     );
     f += mix(streamForce, springForce, reach);
   } else {
-    // Standard harmonic spring with per-particle staggered emergence
+    // Standard harmonic spring with per-particle emergence
     float k = smoothstep(aSeed * 0.45, aSeed * 0.45 + 0.55, uAssemble);
     f += (aHome - aPos) * (uSpring * (0.65 + 0.70 * k));
   }
@@ -82,11 +56,12 @@ void main() {
     f.xy += uTouchVel[i] * g * 2.0;
   }
 
-  // Base ambient 3D curl turbulence field (gentle, organic micro-motion)
-  f += curlNoise(aPos * 0.85 + vec3(0.0, uTime * 0.12, uTime * 0.09)) * uTurb;
+  // Base ambient 3D organic turbulence (fast, smooth, zero micro-stutter)
+  if (uTurb > 0.005) {
+    f += fastTurbulence(aPos, uTime) * uTurb;
+  }
 
-  // Mode 1: Vortex / Spiral
-  // True particle-level tangential velocity + inward/outward spiral orbit around origin
+  // Mode 1: Vortex / Spiral Streams
   if (uMode > 0.5 && uMode < 1.5) {
     vec2 delta = aPos.xy - uEffectOrigin;
     float r = length(delta);
@@ -94,46 +69,38 @@ void main() {
       vec2 tangent = vec2(-delta.y, delta.x) / r;
       vec2 radial = -delta / r;
       float falloff = 1.0 / (1.0 + r * 2.5);
-      // Particle phase variation creates individual orbiting streamers rather than rigid rotation
       float particlePhase = sin(r * 12.0 - uTime * 6.0 + aSeed * 6.28) * 0.35;
       f.xy += (tangent * 4.2 + radial * (1.2 + particlePhase)) * uEffectAmp * falloff;
       f.z += sin(r * 8.0 + aSeed * 10.0) * uEffectAmp * 0.5 * falloff;
     }
   }
   // Mode 2: Traveling Harmonic Wave
-  // A true traveling sinusoidal wave across the particle field
   else if (uMode > 1.5 && uMode < 2.5) {
-    float waveFront = uEffectOrigin.x; // moves smoothly from left to right
+    float waveFront = uEffectOrigin.x;
     float distToFront = aPos.x - waveFront;
-    // Traveling pulse envelope (Gaussian bell)
     float envelope = exp(-pow(distToFront * 3.2, 2.0));
-    // High-frequency per-particle harmonic undulation along normal (Z) and lateral (Y)
     float phase = distToFront * 14.0 - uTime * 8.0 + aSeed * 4.0;
     f.z += sin(phase) * (uEffectAmp * 2.6) * envelope;
     f.y += cos(phase * 0.7) * (uEffectAmp * 1.2) * envelope;
     f.x += sin(phase * 0.5) * (uEffectAmp * 0.8) * envelope;
   }
   // Mode 3: Resonance Ripple
-  // Concentric spherical wave front expanding from impact origin
   else if (uMode > 2.5 && uMode < 3.5) {
     vec3 d = aPos - vec3(uEffectOrigin, 0.0);
     float dist = length(d);
     float waveRadius = uEffectT * 1.85;
     float ring = exp(-pow((dist - waveRadius) * 8.0, 2.0));
-    // Particle-level displacement outward and in Z
     vec3 dir = dist > 1e-4 ? d / dist : vec3(0.0, 0.0, 1.0);
     float crest = sin((dist - waveRadius) * 22.0 + aSeed * 2.0);
     f += dir * (ring * crest * uEffectAmp * 3.8);
     f.z += ring * (uEffectAmp * 2.2) * (1.0 + aSeed);
   }
   // Mode 4: Disassemble / Break
-  // Micro-burst explosion with unique particle velocities, swirl, and deep dispersal
   else if (uMode > 3.5 && uMode < 4.5) {
     vec3 d = aPos - vec3(uEffectOrigin, 0.0);
     float dist = length(d);
     vec3 dir = dist > 1e-4 ? normalize(d) : vec3(0.0, 0.0, 1.0);
-    // Each particle has its own unique chaotic expulsion vector using curl noise + seed
-    vec3 chaoticSpur = curlNoise(aPos * 2.2 + vec3(aSeed * 10.0, uTime * 0.4, aSeed * 5.0));
+    vec3 chaoticSpur = fastTurbulence(aPos * 2.5, uTime * 3.0 + aSeed * 20.0);
     float forceFalloff = 1.0 / (dist + 0.35);
     f += (dir * 1.6 + chaoticSpur * 3.2) * uEffectAmp * forceFalloff * (0.6 + aSeed * 0.8);
   }
@@ -155,6 +122,7 @@ layout(location = 0) in vec3 aPos;
 layout(location = 1) in float aTone;
 layout(location = 2) in float aSeed;
 layout(location = 3) in vec3 aColor;
+layout(location = 4) in float aSemantic;
 uniform mat4 uViewProj;
 uniform float uSize;
 uniform float uDpr;
@@ -165,10 +133,9 @@ uniform float uColorMode;
 uniform float uColorMix;
 uniform float uInvert;
 uniform float uDistScale;
-uniform float uTheme;
+uniform float uRadiance;
 out float vBright;
 out vec3 vColor;
-out float vTheme;
 
 void main() {
   vec3 p = aPos;
@@ -176,43 +143,107 @@ void main() {
   gl_Position = uViewProj * vec4(p, 1.0);
   
   float depthScale = 0.75 + 0.25 * (1.0 - clamp(p.z * 0.85 + 0.35, 0.0, 1.0));
-  
-  // Perspective point scaling:
-  // On mobile where camera is backed away (dist=4.0), uDistScale ~ 0.61 -> scales down particle radius
-  // so 76k particles don't overlap into a solid white blur.
-  // On tablet/desktop where camera is close (dist=2.45), uDistScale = 1.0 -> particles scale up
-  // to fill facial features and contours without sparse dark voids.
   float distScale = clamp(uDistScale, 0.52, 1.55);
   float size = uSize * uDpr * depthScale * distScale;
   gl_PointSize = clamp(size, uPointRange.x, uPointRange.y);
   
   float tone = aTone;
-  
-  // Density-balanced brightness calibration:
-  // Mobile gets balanced highlight compression so it doesn't over-saturate;
-  // Tablet gets enhanced tone clarity so facial contours are vivid and rich.
   float densityComp = clamp(pow(distScale, 0.42), 0.72, 1.28);
-  
-  vBright = uInvert > 0.5
-    ? (0.76 + 0.24 * tone) * (0.86 + 0.14 * depthScale)
-    : (0.58 + 0.42 * tone) * (0.82 + 0.18 * depthScale) * densityComp;
+  float rad = clamp(uRadiance, 0.4, 2.2);
+  float sem = aSemantic;
 
-  // 0.0 = Monochrome, 1.0 = Full Color, 2.0 = Hybrid
-  vec3 col;
-  vec3 vividColor = aColor;
-  float isCol = step(aSeed, clamp(uColorMix, 0.05, 0.95));
+  // Compute color luminance and vibrance saturation boost
+  float rawLum = dot(aColor, vec3(0.299, 0.587, 0.114));
+  float satBoost = 1.0 + (rad - 1.0) * 0.55;
+  vec3 vibrantColor = clamp(mix(vec3(rawLum), aColor, satBoost), 0.0, 1.0);
 
-  if (uColorMode < 0.5) {
-    col = vec3(1.0);
-  } else if (uColorMode < 1.5) {
-    col = vividColor;
+  // Anatomical brightness & contrast grading
+  if (uInvert < 0.5) {
+    // -------------------------------------------------------------
+    // DARK BACKGROUND MODE (Black canvas, luminous particles)
+    // -------------------------------------------------------------
+    float b = 1.0;
+
+    // Skin (sem == 2.0): radiant warm highlight lift with soft rolloff
+    if (sem > 1.5 && sem < 2.5) {
+      float skinLift = pow(tone, max(0.35, 1.0 - (rad - 1.0) * 0.55)) * (0.8 + 0.35 * rad);
+      b = (0.54 + 0.46 * skinLift) * (0.82 + 0.18 * depthScale);
+      vibrantColor = clamp(vibrantColor * (0.94 + 0.12 * (rad - 1.0)), 0.0, 1.0);
+    }
+    // Hair (sem == 1.0): if dark, deepen blackness & contrast; if light/blonde, boost luster
+    else if (sem > 0.5 && sem < 1.5) {
+      if (rawLum < 0.36) {
+        // Deepen dark hair into velvet blackness as radiance increases
+        float hairDarkness = pow(tone, 1.0 + (rad - 1.0) * 0.75) * max(0.4, 1.0 - (rad - 1.0) * 0.32);
+        b = (0.36 + 0.54 * hairDarkness) * (0.82 + 0.18 * depthScale);
+      } else {
+        // Boost bright blonde/silver hair luster
+        float hairLuster = pow(tone, max(0.35, 1.0 - (rad - 1.0) * 0.5)) * (0.8 + 0.35 * rad);
+        b = (0.55 + 0.45 * hairLuster) * (0.82 + 0.18 * depthScale);
+      }
+    }
+    // Features: Eyes, Brows, Lips (sem == 3.0): heighten contrast and eye specular pop
+    else if (sem > 2.5) {
+      float featPop = pow(tone, 0.8) * (0.85 + 0.35 * rad);
+      b = (0.62 + 0.48 * featPop) * (0.82 + 0.18 * depthScale);
+      vibrantColor = clamp(mix(vec3(rawLum), aColor, 1.0 + (rad - 1.0) * 0.75), 0.0, 1.0);
+    }
+    // Torso / Background elements (sem == 0.0)
+    else {
+      b = (0.58 + 0.42 * tone) * rad * (0.82 + 0.18 * depthScale);
+    }
+
+    vBright = clamp(b * densityComp, 0.1, 1.8);
   } else {
-    col = mix(vec3(1.0), vividColor, isCol);
+    // -------------------------------------------------------------
+    // WHITE BACKGROUND MODE (White canvas, dark ink particles)
+    // Inversely proportional: more radiance = sculpted rich ink density,
+    // deeper hair and feature silhouettes so facial form doesn't wash out!
+    // -------------------------------------------------------------
+    float b = 1.0;
+
+    // Skin on white: preserve sculpted delicate ink density so pale skin doesn't vanish
+    if (sem > 1.5 && sem < 2.5) {
+      float skinInk = pow(tone, max(0.4, 1.0 - (rad - 1.0) * 0.4)) * (0.85 + 0.25 * rad);
+      b = (0.74 + 0.26 * skinInk) * (0.86 + 0.14 * depthScale);
+    }
+    // Hair on white: maximize crisp jet-black ink density for dark hair
+    else if (sem > 0.5 && sem < 1.5) {
+      if (rawLum < 0.36) {
+        b = (0.88 + 0.28 * (rad - 1.0)) * (0.86 + 0.14 * depthScale);
+      } else {
+        b = (0.65 + 0.35 * tone) * (0.86 + 0.14 * depthScale);
+      }
+    }
+    // Features on white: sharp ink definition for pupils, iris, and lips
+    else if (sem > 2.5) {
+      b = (0.86 + 0.25 * (rad - 1.0)) * (0.86 + 0.14 * depthScale);
+    }
+    // Torso / Other on white
+    else {
+      b = (0.76 + 0.24 * tone) * (0.86 + 0.14 * depthScale);
+    }
+
+    vBright = clamp(b, 0.2, 1.9);
   }
 
-  if (uInvert > 0.5) {
-    vec3 inkBlack = vec3(0.04, 0.04, 0.05);
-    vec3 richColor = clamp(pow(aColor, vec3(1.1)) * 0.95, 0.0, 1.0);
+  // Color Modes: 0.0 = Monochrome, 1.0 = Full Color, 2.0 = Hybrid
+  vec3 col;
+  float isCol = step(aSeed, clamp(uColorMix, 0.05, 0.95));
+
+  if (uInvert < 0.5) {
+    if (uColorMode < 0.5) {
+      col = vec3(1.0);
+    } else if (uColorMode < 1.5) {
+      col = vibrantColor;
+    } else {
+      col = mix(vec3(1.0), vibrantColor, isCol);
+    }
+  } else {
+    // Rich artist inks on white paper
+    vec3 inkBlack = vec3(0.03, 0.03, 0.04);
+    // On white paper, colors are rendered as rich pigmented watercolor inks
+    vec3 richColor = clamp(pow(vibrantColor, vec3(0.92)) * (0.88 + 0.18 * (rad - 1.0)), 0.0, 1.0);
     if (uColorMode < 0.5) {
       col = inkBlack;
     } else if (uColorMode < 1.5) {
@@ -221,8 +252,8 @@ void main() {
       col = mix(inkBlack, richColor, isCol);
     }
   }
+
   vColor = col;
-  vTheme = uTheme;
 }
 `;
 
@@ -230,7 +261,6 @@ export const RENDER_FS = `#version 300 es
 precision highp float;
 in float vBright;
 in vec3 vColor;
-in float vTheme;
 out vec4 fragColor;
 
 void main() {
@@ -238,64 +268,9 @@ void main() {
   float r2 = dot(p, p);
   if (r2 > 1.0) discard;
 
-  // Theme 0: Fine-Art Particle (Classic soft gaussian stipple)
-  if (vTheme < 0.5) {
-    float a = exp(-r2 * 2.6) * vBright;
-    fragColor = vec4(vColor * a, a);
-    return;
-  }
-
-  // Theme 1: Liquid Dewdrops / Water Beads (Translucent liquid lens with specular highlights)
-  if (vTheme < 1.5) {
-    float z = sqrt(max(0.0, 1.0 - r2));
-    vec3 N = vec3(p.x, p.y, z);
-    vec3 L = normalize(vec3(0.35, 0.48, 0.80));
-    vec3 V = vec3(0.0, 0.0, 1.0);
-    vec3 H = normalize(L + V);
-    float spec = pow(max(0.0, dot(N, H)), 24.0);
-    float fresnel = pow(1.0 - z, 2.0);
-    float waterAlpha = smoothstep(1.0, 0.86, r2) * (0.32 + 0.68 * fresnel) * vBright;
-    vec3 waterColor = mix(vColor, vec3(1.0), spec * 0.95 + fresnel * 0.35);
-    fragColor = vec4(waterColor * waterAlpha, waterAlpha);
-    return;
-  }
-
-  // Theme 2: Prismatic Crystal / Diamond Dust (Faceted refraction with spectral dispersion)
-  if (vTheme < 2.5) {
-    float z = sqrt(max(0.0, 1.0 - r2));
-    float star = pow(max(0.0, 1.0 - abs(p.x) * 2.6) * max(0.0, 1.0 - abs(p.y) * 2.6), 2.2) * 1.6;
-    vec3 prism = vec3(
-      smoothstep(1.0, 0.55, dot(p + vec2(0.05, 0.0), p + vec2(0.05, 0.0))),
-      smoothstep(1.0, 0.55, r2),
-      smoothstep(1.0, 0.55, dot(p - vec2(0.05, 0.0), p - vec2(0.05, 0.0)))
-    );
-    float crystalAlpha = (exp(-r2 * 1.9) * 0.7 + star * 0.55) * vBright;
-    vec3 crystalCol = mix(vColor * prism, vec3(1.0), clamp(star, 0.0, 1.0));
-    fragColor = vec4(crystalCol * crystalAlpha, crystalAlpha);
-    return;
-  }
-
-  // Theme 3: Cosmic Starlight / Nebula Constellation (Diamond stellar spikes & ion halo)
-  if (vTheme < 3.5) {
-    float spike = (pow(max(0.0, 1.0 - abs(p.x) * 3.4), 3.0) * max(0.0, 1.0 - abs(p.y))
-                 + pow(max(0.0, 1.0 - abs(p.y) * 3.4), 3.0) * max(0.0, 1.0 - abs(p.x))) * 0.85;
-    float aura = exp(-r2 * 1.9);
-    float starAlpha = (aura * 0.72 + spike) * vBright;
-    vec3 starCol = mix(vColor, vec3(0.85, 0.94, 1.0), spike * 0.75);
-    fragColor = vec4(starCol * starAlpha, starAlpha);
-    return;
-  }
-
-  // Theme 4: Molten Gold / Polished Bronze (Warm metallic luster with anisotropic sheen)
-  float z = sqrt(max(0.0, 1.0 - r2));
-  vec3 N = vec3(p.x, p.y, z);
-  vec3 L = normalize(vec3(0.42, 0.52, 0.74));
-  vec3 V = vec3(0.0, 0.0, 1.0);
-  vec3 H = normalize(L + V);
-  float spec = pow(max(0.0, dot(N, H)), 14.0);
-  vec3 goldBase = vec3(1.0, 0.82, 0.42);
-  vec3 goldCol = mix(vColor * goldBase, vec3(1.0, 0.96, 0.82), spec * 0.85);
-  float goldAlpha = smoothstep(1.0, 0.72, r2) * (0.65 + 0.35 * spec) * vBright;
-  fragColor = vec4(goldCol * goldAlpha, goldAlpha);
+  // High-performance smooth Gaussian stipple falloff
+  // Extremely fast across mobile GPUs, zero branching, crystal-clear facial resemblance
+  float a = exp(-r2 * 2.8) * vBright;
+  fragColor = vec4(vColor * a, a);
 }
 `;
